@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <error.h>
+#include <errno.h>
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
@@ -10,11 +12,11 @@
 /***********/
 
 typedef struct str {
-    long size;
     char *data;
+    long size;
 } str;
 
-#define CSTR(STR) ((struct str){strlen(STR), STR})
+#define CSTR(STR) ((struct str){STR, strlen(STR)})
 
 void fputstr(str string, FILE *f) {
     fwrite(string.data, 1, string.size, f);
@@ -58,7 +60,7 @@ unsigned long gcd(long x_signed, long y_signed) {
     return x << twos;
 }
 
-void normalise(rational *r) {
+void rat_normalise(rational *r) {
     unsigned long cf = gcd(r->numerator, r->denominator);
     r->numerator /= cf;
     r->denominator /= cf;
@@ -90,24 +92,47 @@ struct polynomial {
     int *term_indices;
 };
 
+struct polynomial poly_dup_terms(struct polynomial p) {
+    {
+        rational *coefficients = NULL;
+        long len = arrlen(p.coefficients);
+        arrsetlen(coefficients, len);
+        for (int i = 0; i < len; i++) coefficients[i] = p.coefficients[i];
+        p.coefficients = coefficients;
+    }
+
+    {
+        int *term_indices = NULL;
+        long len = arrlen(p.term_indices);
+        arrsetlen(term_indices, len);
+        for (int i = 0; i < len; i++) term_indices[i] = p.term_indices[i];
+        p.term_indices = term_indices;
+    }
+
+    return p;
+}
+
 struct polynomial poly_dup(struct polynomial p) {
-    str *variables = NULL;
-    rational *coefficients = NULL;
-    int *term_indices = NULL;
+    {
+        str *variables = NULL;
+        long len = arrlen(p.variables);
+        arrsetlen(variables, len);
+        for (int i = 0; i < len; i++) variables[i] = p.variables[i];
+        p.variables = variables;
+    }
 
-    long len = arrlen(p.variables);
-    arrsetlen(variables, len);
-    for (int i = 0; i < len; i++) variables[i] = p.variables[i];
+    return poly_dup_terms(p);
+}
 
-    len = arrlen(p.coefficients);
-    arrsetlen(coefficients, len);
-    for (int i = 0; i < len; i++) coefficients[i] = p.coefficients[i];
+void poly_free_terms(struct polynomial *p) {
+    arrfree(p->coefficients);
+    arrfree(p->term_indices);
+}
 
-    len = arrlen(p.term_indices);
-    arrsetlen(term_indices, len);
-    for (int i = 0; i < len; i++) term_indices[i] = p.term_indices[i];
-
-    return (struct polynomial){variables, coefficients, term_indices};
+void poly_free(struct polynomial *p) {
+    arrfree(p->variables);
+    arrfree(p->coefficients);
+    arrfree(p->term_indices);
 }
 
 void poly_print(FILE *out, struct polynomial p) {
@@ -144,6 +169,18 @@ struct monomial poly_index(struct polynomial *p, int i) {
     };
 }
 
+void mono_print(str *variables, struct monomial p) {
+    if (p.coefficient.numerator > 0) printf(" + ");
+    printf("%ld", p.coefficient.numerator);
+    if (p.coefficient.denominator != 1) printf("/%lu", p.coefficient.denominator);
+    for (int j = 0; j < p.variable_count; j++) {
+        int index = p.term_indices[j];
+        if (index == 0) continue;
+        fputstr(variables[j], stdout);
+        if (index != 1) printf("^%d", index);
+    }
+}
+
 void poly_add_mono(struct polynomial *p, struct monomial q) {
     int p_i;
     bool found = false;
@@ -164,9 +201,10 @@ void poly_add_mono(struct polynomial *p, struct monomial q) {
         rat_add(&p->coefficients[p_i], &q.coefficient);
     } else {
         arrpush(p->coefficients, q.coefficient);
-        int *p_indices = arraddnptr(p->term_indices, variable_count);
+        //int *p_indices = arraddnptr(p->term_indices, variable_count);
         for (int j = 0; j < variable_count; j++) {
-            p_indices[j] = q.term_indices[j];
+            //p_indices[j] = q.term_indices[j];
+            arrpush(p->term_indices, q.term_indices[j]);
         }
     }
 }
@@ -210,29 +248,416 @@ void poly_mul_add(struct polynomial *p, struct polynomial *q1, struct polynomial
     }
 }
 
-/**********/
-/* Output */
-/**********/
+void mono_mul(struct monomial *p, struct monomial q) {
+    str *vars = NULL;
+    arrpush(vars, CSTR("x"));
+    arrpush(vars, CSTR("b"));
+    arrpush(vars, CSTR("c"));
+    p->coefficient = rat_mul(p->coefficient, q.coefficient);
+    for (int j = 0; j < q.variable_count; j++) {
+        p->term_indices[j] += q.term_indices[j];
+    }
+}
+
+void poly_mul_mono(struct polynomial *p, struct monomial q) {
+    int variable_count = arrlen(p->variables);
+    if (variable_count != q.variable_count) {
+        fprintf(stderr, "Tried to multiply a polynomial and a monomial with differing numbers of terms.\n");
+        exit(EXIT_FAILURE);
+    }
+    int term_count = arrlen(p->coefficients);
+    for (int i = 0; i < term_count; i++) {
+        int *term_indices = &p->term_indices[i * variable_count];
+
+        p->coefficients[i] = rat_mul(p->coefficients[i], q.coefficient);
+        for (int j = 0; j < variable_count; j++) {
+            p->term_indices[j] += q.term_indices[j];
+        }
+    }
+}
+
+/**********************/
+/* Expression Parsing */
+/**********************/
+
+#define IS_LOWER(c) ('a' <= (c) && (c) <= 'z')
+#define IS_UPPER(c) ('A' <= (c) && (c) <= 'Z')
+#define IS_ALPHA(c) (IS_LOWER(c) || IS_UPPER(c))
+#define IS_NUM(c) ('0' <= (c) && (c) <= '9')
+#define IS_ALPHANUM(c) (IS_ALPHA(c) || IS_NUM(c))
+#define IS_WHITESPACE(c) ((c) == ' ' || (c) == '\t' || (c) == '\n' || (c) == '\r')
+#define IS_PRINTABLE(c) (' ' <= (c) && (c) <= '~')
+
+enum atom_type {
+    ATOM_NUMERAL,
+    ATOM_VAR,
+    ATOM_PLUS = '+',
+    ATOM_MINUS = '-',
+    ATOM_TIMES = '*',
+};
+
+struct atom {
+    enum atom_type type;
+    union {
+        int id;
+        rational value;
+    };
+};
+
+enum operation_stack_type {
+    OP_PLUS = '+',
+    OP_MINUS = '-',
+    OP_TIMES = '*',
+    OP_PAREN = '(',
+};
+
+enum operation_precedence {
+    PRECEDENCE_MULTIPLICATIVE,
+    PRECEDENCE_ADDITIVE,
+    PRECEDENCE_GROUPING,
+};
+
+struct partial_operation {
+    enum operation_stack_type type;
+    enum operation_precedence precedence;
+};
+
+struct expr {
+    str *variables;
+    struct atom *body;
+};
+
+int lookup_name(str *variables, str name) {
+    for (int i = 0; i < arrlen(variables); i++) {
+        if (variables[i].size != name.size) continue;
+        if (strncmp(variables[i].data, name.data, name.size) == 0) return i;
+    }
+    return -1;
+}
+
+struct expr parse_expression(str *input) {
+    char *stream = input->data;
+    char *end = stream + input->size;
+
+    struct partial_operation *stack = NULL;
+    str *variables = NULL;
+    struct atom *body = NULL;
+    while (stream < end) {
+        char c = *stream;
+        if (IS_WHITESPACE(c)) {
+            stream++;
+        } else if (IS_ALPHA(c)) {
+            str varname = {stream, 1};
+            stream++;
+            while (stream < end && IS_ALPHANUM(*stream)) {
+                varname.size++;
+                stream++;
+            }
+
+            int id = lookup_name(variables, varname);
+            if (id == -1) {
+                id = arrlen(variables);
+                arrpush(variables, varname);
+            }
+
+            struct atom next;
+            next.type = ATOM_VAR;
+            next.id = id;
+            arrpush(body, next);
+        } else if (IS_NUM(c) || c == '.') {
+            rational num = {0,1};
+            bool fractional = false;
+
+            if (c == '.') fractional = true;
+            else num.numerator = c - '0';
+
+            stream++;
+
+            while (stream < end && IS_NUM(*stream) || *stream == '.') {
+                if (*stream == '.') {
+                    fractional = true;
+                } else {
+                    num.numerator *= 10;
+                    num.numerator += *stream - '0';
+                    if (fractional) num.denominator *= 10;
+                }
+                stream++;
+            }
+
+            rat_normalise(&num);
+
+            struct atom next;
+            next.type = ATOM_NUMERAL;
+            next.value = num;
+            arrpush(body, next);
+        } else if (c == '(' || c == '+' || c == '-' || c == '*') {
+            struct partial_operation op;
+            op.type = c;
+            if (c == '(') op.precedence = PRECEDENCE_GROUPING;
+            if (c == '+' || c == '-') op.precedence = PRECEDENCE_ADDITIVE;
+            if (c == '*') op.precedence = PRECEDENCE_MULTIPLICATIVE;
+            stream++;
+
+            if (op.precedence != PRECEDENCE_GROUPING) {
+                while (arrlen(stack) > 0
+                    && arrlast(stack).precedence <= op.precedence)
+                {
+                    /* emit instructions with earlier or equal precedence */
+                    struct atom next;
+                    next.type = (enum atom_type)arrpop(stack).type;
+                    arrpush(body, next);
+                }
+            }
+            arrpush(stack, op);
+        } else if (c == ')') {
+            stream++;
+
+            while (arrlen(stack) > 0
+                && arrlast(stack).precedence != PRECEDENCE_GROUPING)
+            {
+                /* emit instructions up until the opening paren */
+                struct atom next;
+                next.type = (enum atom_type)arrpop(stack).type;
+                arrpush(body, next);
+            }
+            if (arrlen(stack) == 0) {
+                fprintf(stderr, "Error: Unexpected close paren.\n");
+                exit(EXIT_FAILURE);
+            }
+            enum operation_stack_type type = arrpop(stack).type;
+            if (type != '(') {
+                fprintf(stderr, "Error: Unexpected close paren.\n");
+                exit(EXIT_FAILURE);
+            }
+        } else if (c == '=') {
+            break;
+        } else {
+            fprintf(stderr, "Error: Encountered unknown character '%c'\n", c);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    while (arrlen(stack) > 0
+        && arrlast(stack).precedence != PRECEDENCE_GROUPING)
+    {
+        /* emit instructions up until any unclosed grouping */
+        struct atom next;
+        next.type = (enum atom_type)arrpop(stack).type;
+        arrpush(body, next);
+    }
+    if (arrlen(stack) > 0) {
+        fprintf(stderr, "Error: There are unclosed parentheses.\n");
+        exit(EXIT_FAILURE);
+    }
+    arrfree(stack);
+
+    input->data = stream;
+    input->size = end - stream;
+
+    return (struct expr){variables, body};
+}
+
+/****************/
+/* Verification */
+/****************/
+
+struct subexpr_result {
+    bool is_poly;
+    union {
+        struct polynomial poly;
+        struct monomial mono;
+    };
+};
+
+struct polynomial expand_expression(struct expr expr) {
+    int variable_count = arrlen(expr.variables);
+    struct subexpr_result *poly_stack = NULL;
+    int *mono_index_stack = NULL;
+    for (int i = 0; i < arrlen(expr.body); i++) {
+        struct atom *it = &expr.body[i];
+        switch (it->type) {
+          case ATOM_NUMERAL:
+          {
+            struct subexpr_result next;
+            next.is_poly = false;
+            next.mono.variable_count = variable_count;
+            next.mono.coefficient = it->value;
+            next.mono.term_indices = calloc(variable_count, sizeof(int));
+            arrpush(poly_stack, next);
+            break;
+          }
+          case ATOM_VAR:
+          {
+            struct subexpr_result next;
+            next.is_poly = false;
+            next.mono.variable_count = variable_count;
+            next.mono.coefficient = INT(1);
+            next.mono.term_indices = calloc(variable_count, sizeof(int));
+            next.mono.term_indices[it->id] = 1;
+            arrpush(poly_stack, next);
+            break;
+          }
+          case ATOM_PLUS:
+          case ATOM_MINUS:
+          {
+            struct subexpr_result y = arrpop(poly_stack);
+            struct subexpr_result x = arrpop(poly_stack);
+            if (it->type == ATOM_MINUS) {
+                if (y.is_poly) {
+                    rational *coefficients = y.poly.coefficients;
+                    for (int j = 0; j < arrlen(coefficients); j++) {
+                        coefficients[j].numerator *= -1;
+                    }
+                } else {
+                    y.mono.coefficient.numerator *= -1;
+                }
+            }
+            if (!x.is_poly && !y.is_poly) {
+                struct polynomial poly = {.variables = expr.variables};
+                poly_add_mono(&poly, x.mono);
+                poly_add_mono(&poly, y.mono);
+
+                struct subexpr_result sum;
+                sum.is_poly = true;
+                sum.poly = poly;
+                arrpush(poly_stack, sum);
+            } else if (x.is_poly && y.is_poly) {
+                poly_add(&x.poly, &y.poly);
+                poly_free_terms(&y.poly);
+                arrpush(poly_stack, x);
+            } else if (x.is_poly) {
+                poly_add_mono(&x.poly, y.mono);
+                arrpush(poly_stack, x);
+            } else {
+                poly_add_mono(&y.poly, x.mono);
+                arrpush(poly_stack, y);
+            }
+            break;
+          }
+          case ATOM_TIMES:
+          {
+            struct subexpr_result y = arrpop(poly_stack);
+            struct subexpr_result x = arrpop(poly_stack);
+            if (!x.is_poly && !y.is_poly) {
+                struct polynomial poly = {.variables = expr.variables};
+                mono_mul(&x.mono, y.mono);
+                arrpush(poly_stack, x);
+            } else if (x.is_poly && y.is_poly) {
+                struct polynomial poly = {.variables = expr.variables};
+                poly_mul_add(&poly, &x.poly, &y.poly);
+
+                poly_free_terms(&x.poly);
+                poly_free_terms(&y.poly);
+
+                struct subexpr_result prod;
+                prod.is_poly = true;
+                prod.poly = poly;
+                arrpush(poly_stack, prod);
+            } else if (x.is_poly) {
+                poly_mul_mono(&x.poly, y.mono);
+                arrpush(poly_stack, x);
+            } else {
+                poly_mul_mono(&y.poly, x.mono);
+                arrpush(poly_stack, y);
+            }
+            break;
+          }
+        }
+    }
+    if (arrlen(poly_stack) != 1) {
+        fprintf(stderr, "Error: Evaluated expression but didn't get exactly one polynomial result.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    struct subexpr_result top = poly_stack[0];
+    struct polynomial result = {.variables = expr.variables};
+    if (top.is_poly) result = top.poly;
+    else poly_add_mono(&result, top.mono);
+
+    arrfree(poly_stack);
+    arrfree(mono_index_stack);
+
+    return result;
+}
+
+/****************/
+/* Input/Output */
+/****************/
+
+str read_file(char *path) {
+    FILE *input = NULL;
+    str contents;
+
+    input = fopen(path, "r");
+    if (!input) {
+        error(1, errno, "error opening file %s", path);
+    }
+
+    fseek(input, 0L, SEEK_END);
+    contents.size = ftell(input);
+    contents.data = malloc(contents.size + 1);
+
+    rewind(input);
+    fread(contents.data, 1, contents.size, input);
+    contents.data[contents.size] = '\0';
+
+    fclose(input);
+
+    return contents;
+}
 
 int main(int argc, char **argv) {
-    str *variables = NULL;
-    arrpush(variables, CSTR("x"));
-    arrpush(variables, CSTR("y"));
-    struct polynomial p = {.variables = variables};
-    struct polynomial q = {.variables = variables};
-    arrpush(q.coefficients, INT(1));
-    arrpush(q.term_indices, 1);
-    arrpush(q.term_indices, 0);
-    arrpush(q.coefficients, INT(1));
-    arrpush(q.term_indices, 0);
-    arrpush(q.term_indices, 1);
-    poly_mul_add(&p, &q, &q);
-    fprintf(stdout, "(");
-    poly_print(stdout, q);
-    fprintf(stdout, ")^2 =");
-    poly_print(stdout, p);
-    fprintf(stdout, "\n");
+    if (argc == 1) {
+        error(1, 0, "expected input file");
+    }
+    if (argc > 2) {
+        error(1, 0, "too many arguments");
+    }
 
-    return 0;
+    str input = read_file(argv[1]);
+
+    fputstr(input, stdout);
+
+    struct expr lhs = parse_expression(&input);
+    struct polynomial lhs_poly = expand_expression(lhs);
+    printf("lhs: ");
+    poly_print(stdout, lhs_poly);
+    printf("\n");
+
+    if (input.size == 0) {
+        fprintf(stderr, "Error: Hit EOF before an equals sign.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (input.data[0] != '=') {
+        fprintf(stderr, "Error: Hit unexpected character '%c' after parsing an"
+            " expression.\n", input.data[0]);
+        exit(EXIT_FAILURE);
+    }
+    input.data++;
+    input.size--;
+
+    struct expr rhs = parse_expression(&input);
+    struct polynomial rhs_poly = expand_expression(rhs);
+    printf("rhs: ");
+    poly_print(stdout, rhs_poly);
+    printf("\n");
+
+    if (input.size != 0) {
+        fprintf(stderr, "Error: Hit unexpected character '%c' after parsing an"
+            " equation.\n", input.data[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < arrlen(rhs_poly.coefficients); i++) {
+        rhs_poly.coefficients[i].numerator *= -1;
+    }
+    poly_add(&lhs_poly, &rhs_poly);
+
+    bool equal = true;
+    for (int i = 0; i < arrlen(lhs_poly.coefficients); i++) {
+        if (lhs_poly.coefficients[i].numerator != 0) equal = false;
+    }
+    if (equal) printf("These are equal.\n");
+    else printf("These are not equal.\n");
 }
 
