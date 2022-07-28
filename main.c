@@ -16,6 +16,11 @@ typedef struct str {
     long size;
 } str;
 
+bool str_eq(str a, str b) {
+    if (a.size != b.size) return false;
+    return strncmp(a.data, b.data, a.size) == 0;
+}
+
 #define CSTR(STR) ((struct str){STR, strlen(STR)})
 
 void fputstr(str string, FILE *f) {
@@ -36,6 +41,10 @@ typedef struct rational {
 unsigned long gcd(long x_signed, long y_signed) {
     unsigned long x = x_signed >= 0 ? x_signed : -x_signed;
     unsigned long y = y_signed >= 0 ? y_signed : -y_signed;
+
+    if (x == 0) return y;
+    if (y == 0) return x;
+
     unsigned int twos = 0;
     while (x % 2 == 0) {
         x /= 2;
@@ -284,7 +293,7 @@ void poly_mul_mono(struct polynomial *p, struct monomial q) {
 #define IS_UPPER(c) ('A' <= (c) && (c) <= 'Z')
 #define IS_ALPHA(c) (IS_LOWER(c) || IS_UPPER(c))
 #define IS_NUM(c) ('0' <= (c) && (c) <= '9')
-#define IS_ALPHANUM(c) (IS_ALPHA(c) || IS_NUM(c))
+#define IS_ALPHANUM(c) (IS_ALPHA(c) || IS_NUM(c) || (c) == '_')
 #define IS_WHITESPACE(c) ((c) == ' ' || (c) == '\t' || (c) == '\n' || (c) == '\r')
 #define IS_PRINTABLE(c) (' ' <= (c) && (c) <= '~')
 
@@ -329,18 +338,33 @@ struct expr {
 
 int lookup_name(str *variables, str name) {
     for (int i = 0; i < arrlen(variables); i++) {
-        if (variables[i].size != name.size) continue;
-        if (strncmp(variables[i].data, name.data, name.size) == 0) return i;
+        if (str_eq(variables[i], name)) return i;
     }
     return -1;
 }
 
-struct expr parse_expression(str *input) {
+/* TODO: Make a get_token function instead, which skips whitespace and pushes
+   the input string forward. We could also change parse_expression to use its
+   str pointer the whole way through, just calling get_token for everything. */
+int get_alphanum_prefix(str input) {
+    char *end = input.data + input.size;
+    int result = 0;
+    while (input.data < end && IS_ALPHANUM(*input.data)) {
+        result++;
+        input.data++;
+    }
+    return result;
+}
+
+struct expr parse_expression(str *input, str *variables) {
+    /* TODO: Track the number of values that would be on the stack during
+       execution of the RPN stream, and complain if there wouldn't be enough
+       values for a given operation, or if there wouldn't exactly one value at
+       the end. */
     char *stream = input->data;
     char *end = stream + input->size;
 
     struct partial_operation *stack = NULL;
-    str *variables = NULL;
     struct atom *body = NULL;
     while (stream < end) {
         char c = *stream;
@@ -356,15 +380,16 @@ struct expr parse_expression(str *input) {
 
             int id = lookup_name(variables, varname);
             if (id == -1) {
-                id = arrlen(variables);
-                arrpush(variables, varname);
+                fprintf(stderr, "Error: Unknown variable name \"%s\"\n",
+                    strndup(varname.data, varname.size));
+                exit(EXIT_FAILURE);
             }
 
             struct atom next;
             next.type = ATOM_VAR;
             next.id = id;
             arrpush(body, next);
-        } else if (IS_NUM(c) || c == '.') {
+        } else if (IS_NUM(c) || (c == '.' && (stream + 1) < end && IS_NUM(stream[1]))) {
             rational num = {0,1};
             bool fractional = false;
 
@@ -373,7 +398,7 @@ struct expr parse_expression(str *input) {
 
             stream++;
 
-            while (stream < end && IS_NUM(*stream) || *stream == '.') {
+            while (stream < end && (IS_NUM(*stream) || (*stream == '.' && stream + 1 < end && IS_NUM(stream[1])))) {
                 if (*stream == '.') {
                     fractional = true;
                 } else {
@@ -429,11 +454,8 @@ struct expr parse_expression(str *input) {
                 fprintf(stderr, "Error: Unexpected close paren.\n");
                 exit(EXIT_FAILURE);
             }
-        } else if (c == '=') {
-            break;
         } else {
-            fprintf(stderr, "Error: Encountered unknown character '%c'\n", c);
-            exit(EXIT_FAILURE);
+            break;
         }
     }
 
@@ -580,6 +602,169 @@ struct polynomial expand_expression(struct expr expr) {
     return result;
 }
 
+void parse_theorem(str *input_ptr) {
+    str input = *input_ptr;
+
+    while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+        input.data++;
+        input.size--;
+    }
+
+    str token;
+    token.data = input.data;
+    token.size = get_alphanum_prefix(input);
+    if (token.size == 0) {
+        fprintf(stderr, "Error: Expected theorem name, got '%c'.\n",
+            *input.data);
+        exit(EXIT_FAILURE);
+    }
+    input.data += token.size;
+    input.size -= token.size;
+    /* Discard the theorem name, for now. */
+    if (input.size == 0) {
+        fprintf(stderr, "Error: Expected the theorem signature, but "
+            "got to the end of the file.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (input.data[0] != ':') {
+        fprintf(stderr, "Error: Expected ':', but got '%c'.\n", *input.data);
+        exit(EXIT_FAILURE);
+    }
+    input.data++;
+    input.size--;
+
+    while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+        input.data++;
+        input.size--;
+    }
+    token.data = input.data;
+    token.size = get_alphanum_prefix(input);
+    str *varnames = NULL;
+    if (str_eq(token, CSTR("forall"))) {
+        input.data += token.size;
+        input.size -= token.size;
+        while (true) {
+            while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+                input.data++;
+                input.size--;
+            }
+            token.data = input.data;
+            token.size = get_alphanum_prefix(input);
+            if (token.size == 0) {
+                fprintf(stderr, "Error: Expected variable name, got "
+                    "'%c'.\n", input.data[0]);
+                exit(EXIT_FAILURE);
+            }
+            input.data += token.size;
+            input.size -= token.size;
+            arrpush(varnames, token);
+
+            while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+                input.data++;
+                input.size--;
+            }
+            if (input.size == 0) {
+                fprintf(stderr, "Error: Reached end of file.\n");
+                exit(EXIT_FAILURE);
+            }
+            char c = input.data[0];
+            input.data++;
+            input.size--;
+            if (c == ':') break;
+            if (c != ',') {
+                fprintf(stderr, "Error: Expected ':' or ',', got "
+                    "'%c'.\n", c);
+            }
+        }
+
+        while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+            input.data++;
+            input.size--;
+        }
+        token.data = input.data;
+        token.size = get_alphanum_prefix(input);
+        if (token.size == 0) {
+            fprintf(stderr, "Error: Expected variable type, got "
+                "'%c'.\n", input.data[0]);
+            exit(EXIT_FAILURE);
+        }
+        if (!str_eq(token, CSTR("Number"))) {
+            fprintf(stderr, "Error: Currently the only data type is
+                \"Number\".\n");
+            exit(EXIT_FAILURE);
+        }
+        input.data += token.size;
+        input.size -= token.size;
+
+        while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+            input.data++;
+            input.size--;
+        }
+        if (input.size == 0) {
+            fprintf(stderr, "Error: Reached end of file.\n");
+            exit(EXIT_FAILURE);
+        }
+        char c = input.data[0];
+        input.data++;
+        input.size--;
+        if (c != ',') {
+            fprintf(stderr, "Error: Expected ',', got "
+                "'%c'.\n", c);
+        }
+    }
+
+    struct expr lhs = parse_expression(&input, varnames);
+    if (input.size == 0) {
+        fprintf(stderr, "Error: Expected the rest of a theorem "
+            "signature, but got to the end of the file.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (input.data[0] != '=') {
+        fprintf(stderr, "Error: Hit unexpected character '%c' after "
+            "parsing an expression.\n", input.data[0]);
+        exit(EXIT_FAILURE);
+    }
+    input.data++;
+    input.size--;
+
+    struct polynomial lhs_poly = expand_expression(lhs);
+    printf("lhs: ");
+    poly_print(stdout, lhs_poly);
+    printf("\n");
+
+    struct expr rhs = parse_expression(&input, varnames);
+    if (input.size == 0) {
+        fprintf(stderr, "Error: Expected the theorem body, but got to "
+            "the end of the file.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (input.data[0] != '.') {
+        fprintf(stderr, "Error: Expected '.', but got '%c'.\n", *input.data);
+        exit(EXIT_FAILURE);
+    }
+    input.data++;
+    input.size--;
+
+    struct polynomial rhs_poly = expand_expression(rhs);
+    printf("rhs: ");
+    poly_print(stdout, rhs_poly);
+    printf("\n");
+
+    for (int i = 0; i < arrlen(rhs_poly.coefficients); i++) {
+        rhs_poly.coefficients[i].numerator *= -1;
+    }
+    poly_add(&lhs_poly, &rhs_poly);
+
+    bool equal = true;
+    for (int i = 0; i < arrlen(lhs_poly.coefficients); i++) {
+        if (lhs_poly.coefficients[i].numerator != 0) equal = false;
+    }
+    if (equal) printf("These are equal.\n");
+    else printf("These are not equal.\n");
+
+    *input_ptr = input;
+}
+
 /****************/
 /* Input/Output */
 /****************/
@@ -616,48 +801,30 @@ int main(int argc, char **argv) {
 
     str input = read_file(argv[1]);
 
-    fputstr(input, stdout);
+    while (input.size != 0) {
+        while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+            input.data++;
+            input.size--;
+        }
 
-    struct expr lhs = parse_expression(&input);
-    struct polynomial lhs_poly = expand_expression(lhs);
-    printf("lhs: ");
-    poly_print(stdout, lhs_poly);
-    printf("\n");
+        if (input.size == 0) break;
 
-    if (input.size == 0) {
-        fprintf(stderr, "Error: Hit EOF before an equals sign.\n");
-        exit(EXIT_FAILURE);
+        str token;
+        token.data = input.data;
+        token.size = get_alphanum_prefix(input);
+        input.data += token.size;
+        input.size -= token.size;
+        if (str_eq(token, CSTR("Theorem"))) {
+            parse_theorem(&input);
+        }else if (token.size == 0) {
+            fprintf(stderr, "Error: Unexpected character \"%c\", expected "
+                "\"Theorem\".\n", input.data[0]);
+            exit(EXIT_FAILURE);
+        } else {
+            fprintf(stderr, "Error: Unknown keyword \"%s\", expected "
+                "\"Theorem\".\n", strndup(token.data, token.size));
+            exit(EXIT_FAILURE);
+        }
     }
-    if (input.data[0] != '=') {
-        fprintf(stderr, "Error: Hit unexpected character '%c' after parsing an"
-            " expression.\n", input.data[0]);
-        exit(EXIT_FAILURE);
-    }
-    input.data++;
-    input.size--;
-
-    struct expr rhs = parse_expression(&input);
-    struct polynomial rhs_poly = expand_expression(rhs);
-    printf("rhs: ");
-    poly_print(stdout, rhs_poly);
-    printf("\n");
-
-    if (input.size != 0) {
-        fprintf(stderr, "Error: Hit unexpected character '%c' after parsing an"
-            " equation.\n", input.data[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    for (int i = 0; i < arrlen(rhs_poly.coefficients); i++) {
-        rhs_poly.coefficients[i].numerator *= -1;
-    }
-    poly_add(&lhs_poly, &rhs_poly);
-
-    bool equal = true;
-    for (int i = 0; i < arrlen(lhs_poly.coefficients); i++) {
-        if (lhs_poly.coefficients[i].numerator != 0) equal = false;
-    }
-    if (equal) printf("These are equal.\n");
-    else printf("These are not equal.\n");
 }
 

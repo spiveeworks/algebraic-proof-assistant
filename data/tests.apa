@@ -1,0 +1,10 @@
+Theorem addition: 2 + 2 = 4.
+
+Theorem diff_squares: forall x, y: Number,
+  (x + y)*(x - y) = x*x - y*y.
+
+Theorem diff_binomials: forall x, y: Number,
+  (x+y)*(x+y) - (x-y)*(x-y) = 4*x*y.
+
+Theorem complete_square: forall x, b, c: Number,
+  (x + 0.5*b)*(x + 0.5*b) - 0.25*b*b + c = x*x + b*x + c.

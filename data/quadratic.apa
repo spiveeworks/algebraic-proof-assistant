@@ -1,0 +1,10 @@
+Postulate s: Number.
+Postulate s_squared: s * s = 2.
+
+Theorem s_quadratic: (s + 1)*(s + 1) - 2*s = 3,
+Proof:
+  (s + 1)*(s + 1) - 2*s
+= s*s + 2*s + 1 - 2*s
+= s*s + 1
+= 2 + 1 (-| s_squared, forwards)
+= 3.
