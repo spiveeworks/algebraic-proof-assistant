@@ -1,0 +1,6 @@
+Postulate x, y, z: Number.
+Postulate inverse: x * y = 1.
+
+Theorem poly_fail: x * y = x * x * z.
+
+Theorem subst_fail: x * z = 1 -| inverse.

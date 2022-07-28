@@ -4,5 +4,9 @@ Theorem commutative: x + y = y + x.
 
 Postulate inverses: x*y = 1.
 
-Theorem subst_test: forall z, x*y*z = 1*z -| inverses.
+Theorem subst_test: forall z: Number,
+  x*y*z = 1*z -| inverses.
+
+Theorem subst_reverse_test: forall z: Number,
+  z*1 = z*(x*y) -| inverses.
 
