@@ -602,7 +602,47 @@ struct polynomial expand_expression(struct expr expr) {
     return result;
 }
 
-void parse_theorem(str *input_ptr) {
+void parse_varnames(str *input, str **varnames) {
+    while (true) {
+        while (input->size > 0 && IS_WHITESPACE(*input->data)) {
+            input->data++;
+            input->size--;
+        }
+        str token;
+        token.data = input->data;
+        token.size = get_alphanum_prefix(*input);
+        if (token.size == 0) {
+            fprintf(stderr, "Error: Expected variable name, got "
+                "'%c'.\n", input->data[0]);
+            exit(EXIT_FAILURE);
+        }
+        input->data += token.size;
+        input->size -= token.size;
+        arrpush(*varnames, token);
+
+        while (input->size > 0 && IS_WHITESPACE(*input->data)) {
+            input->data++;
+            input->size--;
+        }
+        if (input->size == 0) {
+            fprintf(stderr, "Error: Reached end of file.\n");
+            exit(EXIT_FAILURE);
+        }
+        if (input->data[0] != ',') break;
+        input->data++;
+        input->size--;
+    }
+}
+
+/************/
+/* Theorems */
+/************/
+
+struct items {
+    str *varnames;
+};
+
+void parse_theorem(str *input_ptr, struct items *items) {
     str input = *input_ptr;
 
     while (input.size > 0 && IS_WHITESPACE(*input.data)) {
@@ -639,43 +679,19 @@ void parse_theorem(str *input_ptr) {
     }
     token.data = input.data;
     token.size = get_alphanum_prefix(input);
-    str *varnames = NULL;
+    int global_var_count = arrlen(items->varnames);
     if (str_eq(token, CSTR("forall"))) {
         input.data += token.size;
         input.size -= token.size;
-        while (true) {
-            while (input.size > 0 && IS_WHITESPACE(*input.data)) {
-                input.data++;
-                input.size--;
-            }
-            token.data = input.data;
-            token.size = get_alphanum_prefix(input);
-            if (token.size == 0) {
-                fprintf(stderr, "Error: Expected variable name, got "
-                    "'%c'.\n", input.data[0]);
-                exit(EXIT_FAILURE);
-            }
-            input.data += token.size;
-            input.size -= token.size;
-            arrpush(varnames, token);
 
-            while (input.size > 0 && IS_WHITESPACE(*input.data)) {
-                input.data++;
-                input.size--;
-            }
-            if (input.size == 0) {
-                fprintf(stderr, "Error: Reached end of file.\n");
-                exit(EXIT_FAILURE);
-            }
-            char c = input.data[0];
-            input.data++;
-            input.size--;
-            if (c == ':') break;
-            if (c != ',') {
-                fprintf(stderr, "Error: Expected ':' or ',', got "
-                    "'%c'.\n", c);
-            }
+        parse_varnames(&input, &items->varnames);
+        if (input.data[0] != ':') {
+            fprintf(stderr, "Error: Expected ':' or ',', got '%c'.\n",
+                input.data[0]);
+            exit(EXIT_FAILURE);
         }
+        input.data++;
+        input.size--;
 
         while (input.size > 0 && IS_WHITESPACE(*input.data)) {
             input.data++;
@@ -684,13 +700,13 @@ void parse_theorem(str *input_ptr) {
         token.data = input.data;
         token.size = get_alphanum_prefix(input);
         if (token.size == 0) {
-            fprintf(stderr, "Error: Expected variable type, got "
-                "'%c'.\n", input.data[0]);
+            fprintf(stderr, "Error: Expected variable type, got '%c'.\n",
+                input.data[0]);
             exit(EXIT_FAILURE);
         }
         if (!str_eq(token, CSTR("Number"))) {
-            fprintf(stderr, "Error: Currently the only data type is
-                \"Number\".\n");
+            fprintf(stderr, "Error: Currently the only data type is "
+                "\"Number\".\n");
             exit(EXIT_FAILURE);
         }
         input.data += token.size;
@@ -704,16 +720,14 @@ void parse_theorem(str *input_ptr) {
             fprintf(stderr, "Error: Reached end of file.\n");
             exit(EXIT_FAILURE);
         }
-        char c = input.data[0];
+        if (input.data[0] != ',') {
+            fprintf(stderr, "Error: Expected ',', got '%c'.\n", input.data[0]);
+        }
         input.data++;
         input.size--;
-        if (c != ',') {
-            fprintf(stderr, "Error: Expected ',', got "
-                "'%c'.\n", c);
-        }
     }
 
-    struct expr lhs = parse_expression(&input, varnames);
+    struct expr lhs = parse_expression(&input, items->varnames);
     if (input.size == 0) {
         fprintf(stderr, "Error: Expected the rest of a theorem "
             "signature, but got to the end of the file.\n");
@@ -732,7 +746,7 @@ void parse_theorem(str *input_ptr) {
     poly_print(stdout, lhs_poly);
     printf("\n");
 
-    struct expr rhs = parse_expression(&input, varnames);
+    struct expr rhs = parse_expression(&input, items->varnames);
     if (input.size == 0) {
         fprintf(stderr, "Error: Expected the theorem body, but got to "
             "the end of the file.\n");
@@ -763,6 +777,52 @@ void parse_theorem(str *input_ptr) {
     else printf("These are not equal.\n");
 
     *input_ptr = input;
+    arrsetlen(items->varnames, global_var_count);
+}
+
+void parse_postulate(str *input, struct items *items) {
+    parse_varnames(input, &items->varnames);
+    if (input->data[0] != ':') {
+        fprintf(stderr, "Error: Expected ':' or ',', got '%c'.\n",
+            input->data[0]);
+        exit(EXIT_FAILURE);
+    }
+    input->data++;
+    input->size--;
+
+    while (input->size > 0 && IS_WHITESPACE(*input->data)) {
+        input->data++;
+        input->size--;
+    }
+    str token;
+    token.data = input->data;
+    token.size = get_alphanum_prefix(*input);
+    if (token.size == 0) {
+        fprintf(stderr, "Error: Expected variable type, got '%c'.\n",
+            input->data[0]);
+        exit(EXIT_FAILURE);
+    }
+    if (!str_eq(token, CSTR("Number"))) {
+        fprintf(stderr, "Error: Currently the only data type is "
+            "\"Number\".\n");
+        exit(EXIT_FAILURE);
+    }
+    input->data += token.size;
+    input->size -= token.size;
+
+    while (input->size > 0 && IS_WHITESPACE(*input->data)) {
+        input->data++;
+        input->size--;
+    }
+    if (input->size == 0) {
+        fprintf(stderr, "Error: Reached end of file.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (input->data[0] != '.') {
+        fprintf(stderr, "Error: Expected '.', got '%c'.\n", input->data[0]);
+    }
+    input->data++;
+    input->size--;
 }
 
 /****************/
@@ -801,6 +861,8 @@ int main(int argc, char **argv) {
 
     str input = read_file(argv[1]);
 
+    struct items items = {};
+
     while (input.size != 0) {
         while (input.size > 0 && IS_WHITESPACE(*input.data)) {
             input.data++;
@@ -815,14 +877,17 @@ int main(int argc, char **argv) {
         input.data += token.size;
         input.size -= token.size;
         if (str_eq(token, CSTR("Theorem"))) {
-            parse_theorem(&input);
-        }else if (token.size == 0) {
+            parse_theorem(&input, &items);
+        } else if (str_eq(token, CSTR("Postulate"))) {
+            parse_postulate(&input, &items);
+        } else if (token.size == 0) {
             fprintf(stderr, "Error: Unexpected character \"%c\", expected "
-                "\"Theorem\".\n", input.data[0]);
+                "\"Theorem\", or \"Postulate\".\n", input.data[0]);
             exit(EXIT_FAILURE);
         } else {
             fprintf(stderr, "Error: Unknown keyword \"%s\", expected "
-                "\"Theorem\".\n", strndup(token.data, token.size));
+                "\"Theorem\", or \"Postulate\".\n",
+                strndup(token.data, token.size));
             exit(EXIT_FAILURE);
         }
     }
