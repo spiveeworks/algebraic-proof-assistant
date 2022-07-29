@@ -659,8 +659,24 @@ bool check_subexpression(struct atom *x, int x_i, struct atom *y, int *i_out) {
             "end of any valid subexpression.\n");
         exit(EXIT_FAILURE);
     }
+    if (y_i >= 0) {
+        fprintf(stderr, "Error: Tried to compare to an expression with "
+            "multiple values?\n");
+        exit(EXIT_FAILURE);
+    }
     if (i_out) *i_out = x_i;
     return true;
+}
+
+bool expr_eq(struct atom *x, struct atom *y) {
+    int x_i = arrlen(x) - 1;
+    bool success = check_subexpression(x, x_i, y, &x_i);
+    if (success && x_i >= 0) {
+        fprintf(stderr, "Error: Tried to compare an expression with "
+            "multiple values?\n");
+        exit(EXIT_FAILURE);
+    }
+    return success;
 }
 
 struct equation {
@@ -744,6 +760,32 @@ bool verify_substitution(struct equation goal, struct equation identity) {
             }
         }
     }
+    fprintf(stderr, "Error: Reached end of expression before reaching the end "
+        "of some subexpressions.\n");
+    exit(EXIT_FAILURE);
+}
+
+bool verify_manipulation(struct equation *p) {
+    struct polynomial lhs_poly = expand_expression(p->lhs);
+    struct polynomial rhs_poly = expand_expression(p->rhs);
+
+    for (int i = 0; i < arrlen(rhs_poly.coefficients); i++) {
+        rhs_poly.coefficients[i].numerator *= -1;
+    }
+    poly_add(&lhs_poly, &rhs_poly);
+
+    bool equal = true;
+    for (int i = 0; i < arrlen(lhs_poly.coefficients); i++) {
+        if (lhs_poly.coefficients[i].numerator != 0) {
+            equal = false;
+            break;
+        }
+    }
+    poly_free_terms(&lhs_poly);
+    /* TODO store rhs_poly, in case it is about to be used again in a chained
+       equality proof. */
+    poly_free_terms(&rhs_poly);
+    return equal;
 }
 
 /************/
@@ -808,6 +850,125 @@ struct equation parse_equation(str *input, struct items *items) {
     result.rhs = parse_expression(input, items->varnames);
 
     return result;
+}
+
+void parse_proof(str *input, struct items *items, struct equation goal) {
+    struct equation p = {};
+    p.lhs = parse_expression(input, items->varnames);
+
+    if (input->size == 0) {
+        fprintf(stderr, "Error: Expected '=', but got to the end of the "
+            "file.\n");
+        exit(EXIT_FAILURE);
+    }
+    if (input->data[0] != '=') {
+        fprintf(stderr, "Error: Expected '=', but got '%c'.\n",
+            input->data[0]);
+        exit(EXIT_FAILURE);
+    }
+    input->data++;
+    input->size--;
+
+    bool valid = true;
+    bool lhs_match = expr_eq(p.lhs.body, goal.lhs.body);
+
+    while (true) {
+        p.rhs = parse_expression(input, items->varnames);
+
+        if (input->size == 0) {
+            fprintf(stderr, "Error: Expected '-|' or '=' or '.', but got to "
+                "the end of the file.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if (input->size >= 2 && input->data[0] == '-' && input->data[1] == '|') {
+            input->data += 2;
+            input->size -= 2;
+
+            while (input->size > 0 && IS_WHITESPACE(*input->data)) {
+                input->data++;
+                input->size--;
+            }
+            str token;
+            token.data = input->data;
+            token.size = get_alphanum_prefix(*input);
+            if (token.size == 0) {
+                fprintf(stderr, "Error: Expected identity name, got '%c'.\n",
+                    input->data[0]);
+                exit(EXIT_FAILURE);
+            }
+
+            int identity_id = lookup_name(items->identity_names, token);
+            if (identity_id == -1) {
+                fprintf(stderr, "Error: Unknown theorem \"%s\".\n",
+                    strndup(token.data, token.size));
+                exit(EXIT_FAILURE);
+            }
+            input->data += token.size;
+            input->size -= token.size;
+
+            bool match = verify_substitution(p, items->identities[identity_id]);
+            if (!match) {
+                printf("Subsitution step was not successful.\n");
+                valid = false;
+            }
+
+            while (input->size > 0 && IS_WHITESPACE(*input->data)) {
+                input->data++;
+                input->size--;
+            }
+
+            if (input->size == 0) {
+                fprintf(stderr, "Error: Expected '=' or '.', but got to "
+                    "the end of the file.\n");
+                exit(EXIT_FAILURE);
+            }
+            if (input->data[0] != '=' && input->data[0] != '.') {
+                fprintf(stderr, "Error: Expected '=' or '.', but got '%c'.\n",
+                    input->data[0]);
+                exit(EXIT_FAILURE);
+            }
+        } else if (input->data[0] == '.' || input->data[0] == '=') {
+            bool equal = verify_manipulation(&p);
+            if (!equal) {
+                printf("Polynomial manipulation step was not successful.\n");
+                valid = false;
+            }
+        } else {
+            fprintf(stderr, "Error: Expected '-|' or '=' or '.', but got "
+                "'%c'.\n", input->data[0]);
+            exit(EXIT_FAILURE);
+        }
+
+        if (input->data[0] == '.') {
+            input->data++;
+            input->size--;
+            break;
+        }
+
+        /* input->data[0] is '=' */
+        input->data++;
+        input->size--;
+
+        arrfree(p.lhs.body);
+        p.lhs = p.rhs;
+        p.rhs = (struct expr){};
+
+        /* continue */
+    }
+
+    bool rhs_match = expr_eq(p.rhs.body, goal.rhs.body);
+
+    if (!lhs_match) printf("The starting point of the proof did not agree "
+            "with the left hand side of the goal.\n");
+    if (!rhs_match) printf("The end point of the proof did not agree with the "
+            "right hand side of the goal.\n");
+
+    if (lhs_match && rhs_match && valid) printf("Proof was valid.\n");
+    else printf("Proof was invalid.\n");
+
+    arrfree(p.lhs.body);
+    arrfree(p.rhs.body);
 }
 
 void parse_theorem(str *input_ptr, struct items *items) {
@@ -898,33 +1059,16 @@ void parse_theorem(str *input_ptr, struct items *items) {
     struct equation p = parse_equation(&input, items);
 
     if (input.size == 0) {
-        fprintf(stderr, "Error: Expected theorem justification, or theorem "
-            "end, but got to the end of the file.\n");
+        fprintf(stderr, "Error: Expected ',' or '-|' or '.', but got to the "
+            "end of the file.\n");
         exit(EXIT_FAILURE);
     }
     if (input.data[0] == '.') {
         input.data++;
         input.size--;
 
-        struct polynomial lhs_poly = expand_expression(p.lhs);
-        printf("lhs: ");
-        poly_print(stdout, lhs_poly);
-        printf("\n");
+        bool equal = verify_manipulation(&p);
 
-        struct polynomial rhs_poly = expand_expression(p.rhs);
-        printf("rhs: ");
-        poly_print(stdout, rhs_poly);
-        printf("\n");
-
-        for (int i = 0; i < arrlen(rhs_poly.coefficients); i++) {
-            rhs_poly.coefficients[i].numerator *= -1;
-        }
-        poly_add(&lhs_poly, &rhs_poly);
-
-        bool equal = true;
-        for (int i = 0; i < arrlen(lhs_poly.coefficients); i++) {
-            if (lhs_poly.coefficients[i].numerator != 0) equal = false;
-        }
         if (equal) printf("These are equal.\n");
         else printf("These are not equal.\n");
     } else if (input.size >= 2
@@ -940,7 +1084,7 @@ void parse_theorem(str *input_ptr, struct items *items) {
         token.data = input.data;
         token.size = get_alphanum_prefix(input);
         if (token.size == 0) {
-            fprintf(stderr, "Error: Expected variable type, got '%c'.\n",
+            fprintf(stderr, "Error: Expected identity name, got '%c'.\n",
                 input.data[0]);
             exit(EXIT_FAILURE);
         }
@@ -978,6 +1122,52 @@ void parse_theorem(str *input_ptr, struct items *items) {
         }
         input.data++;
         input.size--;
+    } else if (input.data[0] == ',') {
+        input.data++;
+        input.size--;
+
+        while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+            input.data++;
+            input.size--;
+        }
+
+        token.data = input.data;
+        token.size = get_alphanum_prefix(input);
+        if (!str_eq(token, CSTR("Proof"))) {
+            if (input.size == 0) fprintf(stderr, "Error: Expected \"Proof:\", "
+                    "got end of file.\n");
+            else if (token.size == 0) fprintf(stderr, "Error: Expected "
+                    "\"Proof:\", got '%c'.\n", input.data[0]);
+            else fprintf(stderr, "Error: Expected \"Proof:\", got \"%s\".\n",
+                    strndup(token.data, token.size));
+            exit(EXIT_FAILURE);
+        }
+        input.data += token.size;
+        input.size -= token.size;
+
+        while (input.size > 0 && IS_WHITESPACE(*input.data)) {
+            input.data++;
+            input.size--;
+        }
+        if (input.size == 0) {
+            fprintf(stderr, "Error: Expected ':', but got to the end of the "
+                "file.\n");
+            exit(EXIT_FAILURE);
+        }
+        if (input.data[0] != ':') {
+            fprintf(stderr, "Error: Expected ':', but got '%c'.\n",
+                input.data[0]);
+            exit(EXIT_FAILURE);
+        }
+        input.data++;
+        input.size--;
+
+        parse_proof(&input, items, p);
+    } else if (input.size == 0) {
+        exit(EXIT_FAILURE);
+    } else {
+        fprintf(stderr, "Error: Expected ',' or '-|' or '.', but got '%c'.\n", input.data[0]);
+        exit(EXIT_FAILURE);
     }
 
     arrfree(p.lhs.body);

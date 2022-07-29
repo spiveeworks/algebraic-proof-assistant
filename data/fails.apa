@@ -4,3 +4,28 @@ Postulate inverse: x * y = 1.
 Theorem poly_fail: x * y = x * x * z.
 
 Theorem subst_fail: x * z = 1 -| inverse.
+
+Theorem chain_lhs_fail: z * x * y = z,
+Proof:
+  z * (x * y)
+= z * 1 -| inverse
+= z.
+
+Theorem chain_rhs_fail: z * x * y = z,
+Proof:
+  z * x * y
+= z * (x * y)
+= z * 1 -| inverse.
+
+Theorem chain_subst_fail: (z * x) * y = y,
+Proof:
+  (z * x) * y
+= 1 * y -| inverse
+= y.
+
+Theorem chain_poly_fail: z * (x * y) = y,
+Proof:
+  z * (x * y)
+= z * 1 -| inverse
+= y.
+

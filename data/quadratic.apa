@@ -6,5 +6,24 @@ Proof:
   (s + 1)*(s + 1) - 2*s
 = s*s + 2*s + 1 - 2*s
 = s*s + 1
-= 2 + 1 (-| s_squared, forwards)
+= 2 + 1 -| s_squared
 = 3.
+
+Postulate r: Number.
+Postulate r_squared: r * r = 5.
+
+Theorem rs_squared: (r * s) * (r * s) = 10,
+Proof:
+  (r * s) * (r * s)
+= (r * r) * (s * s)
+= 5 * (s * s) -| r_squared
+= 5 * 2 -| s_squared
+= 10.
+
+Theorem s_adjugate: (s - 1) * (s + 1) = 1,
+Proof:
+  (s - 1) * (s + 1)
+= s * s - 1
+= 2 - 1 -| s_squared
+= 1.
+
