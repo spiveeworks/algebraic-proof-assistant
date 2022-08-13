@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <error.h>
 #include <errno.h>
+
+#ifdef _MSC_VER
+#define alloca _alloca
+#endif
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
@@ -241,7 +244,7 @@ void poly_mul_add(struct polynomial *p, struct polynomial *q1, struct polynomial
     int q1_term_count = arrlen(q1->coefficients);
     int q2_term_count = arrlen(q2->coefficients);
     struct monomial m;
-    int term_indices[variable_count];
+    int *term_indices = alloca(variable_count * sizeof(int));
     m.variable_count = variable_count;
     m.term_indices = term_indices;
     for (int i1 = 0; i1 < q1_term_count; i1++) {
@@ -412,8 +415,9 @@ struct expr parse_expression(str *input, str *variables) {
 
             int id = lookup_name(variables, varname);
             if (id == -1) {
-                fprintf(stderr, "Error: Unknown variable name \"%s\"\n",
-                    strndup(varname.data, varname.size));
+                fprintf(stderr, "Error: Unknown variable name \"");
+                fputstr(varname, stderr);
+                fprintf(stderr, "\"\n");
                 exit(EXIT_FAILURE);
             }
 
@@ -831,7 +835,7 @@ struct items {
 };
 
 struct equation parse_equation(str *input, struct items *items) {
-    struct equation result = {};
+    struct equation result = {0};
 
     result.lhs = parse_expression(input, items->varnames);
     if (input->size == 0) {
@@ -853,7 +857,7 @@ struct equation parse_equation(str *input, struct items *items) {
 }
 
 void parse_proof(str *input, struct items *items, struct equation goal) {
-    struct equation p = {};
+    struct equation p = {0};
     p.lhs = parse_expression(input, items->varnames);
 
     if (input->size == 0) {
@@ -900,8 +904,9 @@ void parse_proof(str *input, struct items *items, struct equation goal) {
 
             int identity_id = lookup_name(items->identity_names, token);
             if (identity_id == -1) {
-                fprintf(stderr, "Error: Unknown theorem \"%s\".\n",
-                    strndup(token.data, token.size));
+                fprintf(stderr, "Error: Unknown theorem \"");
+                fputstr(token, stderr);
+                fprintf(stderr, "\".\n");
                 exit(EXIT_FAILURE);
             }
             input->data += token.size;
@@ -952,7 +957,7 @@ void parse_proof(str *input, struct items *items, struct equation goal) {
 
         arrfree(p.lhs.body);
         p.lhs = p.rhs;
-        p.rhs = (struct expr){};
+        p.rhs = (struct expr){0};
 
         /* continue */
     }
@@ -1091,8 +1096,9 @@ void parse_theorem(str *input_ptr, struct items *items) {
 
         int identity_id = lookup_name(items->identity_names, token);
         if (identity_id == -1) {
-            fprintf(stderr, "Error: Unknown theorem \"%s\".\n",
-                strndup(token.data, token.size));
+            fprintf(stderr, "Error: Unknown theorem \"");
+            fputstr(token, stderr);
+            fprintf(stderr, "\".\n");
             exit(EXIT_FAILURE);
         }
         input.data += token.size;
@@ -1134,12 +1140,17 @@ void parse_theorem(str *input_ptr, struct items *items) {
         token.data = input.data;
         token.size = get_alphanum_prefix(input);
         if (!str_eq(token, CSTR("Proof"))) {
-            if (input.size == 0) fprintf(stderr, "Error: Expected \"Proof:\", "
+            if (input.size == 0) {
+                fprintf(stderr, "Error: Expected \"Proof:\", "
                     "got end of file.\n");
-            else if (token.size == 0) fprintf(stderr, "Error: Expected "
+            } else if (token.size == 0) {
+                fprintf(stderr, "Error: Expected "
                     "\"Proof:\", got '%c'.\n", input.data[0]);
-            else fprintf(stderr, "Error: Expected \"Proof:\", got \"%s\".\n",
-                    strndup(token.data, token.size));
+            } else {
+                fprintf(stderr, "Error: Expected \"Proof:\", got \"");
+                fputstr(token, stderr);
+                fprintf(stderr, "\".\n");
+            }
             exit(EXIT_FAILURE);
         }
         input.data += token.size;
@@ -1247,7 +1258,7 @@ str read_file(char *path) {
 
     input = fopen(path, "r");
     if (!input) {
-        error(1, errno, "error opening file %s", path);
+        perror("error opening file");
     }
 
     fseek(input, 0L, SEEK_END);
@@ -1265,15 +1276,17 @@ str read_file(char *path) {
 
 int main(int argc, char **argv) {
     if (argc == 1) {
-        error(1, 0, "expected input file");
+        fprintf(stderr, "Error: Expected input file.\n");
+        exit(EXIT_FAILURE);
     }
     if (argc > 2) {
-        error(1, 0, "too many arguments");
+        fprintf(stderr, "Error: Too many arguments.\n");
+        exit(EXIT_FAILURE);
     }
 
     str input = read_file(argv[1]);
 
-    struct items items = {};
+    struct items items = {0};
 
     while (input.size != 0) {
         while (input.size > 0 && IS_WHITESPACE(*input.data)) {
@@ -1297,9 +1310,9 @@ int main(int argc, char **argv) {
                 "\"Theorem\", or \"Postulate\".\n", input.data[0]);
             exit(EXIT_FAILURE);
         } else {
-            fprintf(stderr, "Error: Unknown keyword \"%s\", expected "
-                "\"Theorem\", or \"Postulate\".\n",
-                strndup(token.data, token.size));
+            fprintf(stderr, "Error: Unknown keyword \"");
+            fputstr(token, stderr);
+            fprintf(stderr, "\", expected \"Theorem\", or \"Postulate\".\n");
             exit(EXIT_FAILURE);
         }
     }
