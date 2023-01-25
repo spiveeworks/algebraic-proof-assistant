@@ -1,0 +1,188 @@
+-- Goal is to define `Natural`s, and show that it has the properties of a Ring,
+-- maybe that rings can be normalised?? Not sure.
+
+Data Natural: Type,
+  zero : Natural,
+  successor : Natural -> Natural.
+
+Function add : Natural -> Natural -> Natural,
+  add a zero = a,
+  add a (successor b) = successor (add a b).
+
+Notation a + b = add a b.
+
+Theorem zero_add: forall a: Natural, zero + a = a,
+Proof:
+  if a = zero,
+      zero + a
+    = zero + zero -| case
+    = zero
+    = a -| case;
+  else a = successor a',
+      zero + a
+    = zero + successor a' -| case
+    = successor (zero + a')
+    = successor a' -| zero_add a'
+    = a -| case.
+
+Theorem successor_add: forall a, b: Natural,
+  successor a + b = successor (a + b),
+Proof:
+  if b = zero,
+      successor a + b
+    = successor a + zero -| case
+    = successor a
+    = successor (a + zero)
+    = successor (a + b) -| case;
+  else b = successor b',
+      successor a + b
+    = successor a + successor b' -| case
+    = successor (successor a + b')
+    = successor (successor (a + b')) -| successor_add a b'
+    = successor (a + successor b')
+    = successor (a + b) -| case.
+
+Theorem add_commutative: forall a, b: Natural, a + b = b + a,
+Proof:
+  if b = zero,
+      a + b
+    = a + zero -| case
+    = a
+    = zero + a -| zero_add a
+    = b + a -| case;
+  if b = successor b',
+      a + b
+    = a + successor b' -| case
+    = successor (a + b')
+    = successor (b' + a) -| commutative a b'
+    = successor b' + a -| successor_add b' a
+    = b + a -| case.
+
+Theorem add_associative: forall a, b, c: Natural, a + (b + c) = (a + b) + c,
+Proof:
+  if c = zero,
+      a + (b + c)
+    = a + (b + zero) -| case
+    = a + b
+    = (a + b) + zero
+    = (a + b) + c -| case;
+  else c = successor c'
+      a + (b + c)
+    = a + (b + successor c') -| case
+    = a + successor (b + c')
+    = successor (a + (b + c'))
+    = successor ((a + b) + c') -| associative a b c'
+    = (a + b) + successor c'
+    = (a + b) + c -| case.
+
+
+Function multiply : Natural -> Natural -> Natural,
+  multiply zero a = zero
+  multiply (successor a) b = multiply a b + b
+
+Notation a * b = multiply a b.
+
+Theorem multiply_zero: forall a: Natural, zero * a = zero.
+Theorem multiply_successor: forall a, b: Natural, a * successor b = a * b + a.
+
+Theorem multiply_commutative: forall a, b: Natural, a * b = b * a,
+  if a = zero,
+      a * b
+    = zero * b -| case
+    = zero
+    = b * zero -| multiply_zero b
+    = b * a -| case;
+  else if b = zero,
+      a * b
+    = a * zero -| case
+    = zero -| multiply_zero a
+    = zero * a
+    = b * a -| case
+  else a = successor a', b = successor b',
+      a * b
+    = successor a' * b -| case[a]
+    = successor a' * successor b' -| case[b]
+    = a' * successor b' + successor b'
+    = (a' * b' + a') + successor b' -| multiply_successor a' b'
+    = (b' * a' + a') + successor b' -| multiply_commutative a' b'
+    = successor b' * a' + successor b'
+    = successor b' * successor a' -| multiply_successor (successor b') a'
+    = b * successor a' -| case[b]
+    = b * a -| case[a].
+
+Theorem left_distributive: forall a, b, c: Natural,
+  a * (b + c) = a * b + a * c,
+Proof:
+  if c = zero,
+      a * (b + c)
+    = a * (b + zero) -| case
+    = a * b
+    = a * b + zero
+    = a * b + a * zero -| multiply_zero a
+    = a * b + a * c -| case;
+  if c = successor c'
+      a * (b + c)
+    = a * (b + successor c') -| case
+    = a * successor (b + c')
+    = a * (b + c') + a
+    = (a * b + a * c') + a -| distributive a b c'
+    = a * b + (a * c' + a) -| associative _ _ _
+    = a * b + a * successor c'
+    = a * b + a * c -| case.
+
+-- Either of these could be proved using commutative multiplication, but the
+-- symmetry between these proofs is also worth noting. This symmetry is
+-- peculiar to this proof assistant!
+Theorem right_distributive: forall a, b, c: Natural,
+  (a + b) * c = a * c + b * c,
+Proof:
+  if b = zero,
+      (a + b) * c
+    = (a + zero) * c -| case
+    = a * c
+    = a * c + zero
+    = a * c + zero * c
+    = a * c + b * c -| case;
+  if b = successor b'
+      (a + b) * c
+    = (a + successor b') * c -| case
+    = successor (a + b') * c
+    = (a + b') * c + c
+    = (a * c + b' * c) + c -| right_distributive a b' c
+    = a * c + (b' * c + c) -| associative _ _ _
+    = a * c + successor b' * c
+    = a * c + b * c -| case.
+
+Theorem multiply_associative: forall a, b, c: Natural,
+  a * (b * c) = (a * b) * c,
+Proof:
+  if a = zero,
+      a * (b * c)
+    = zero * (b * c) -| case
+    = zero
+    = zero * c
+    = (zero * b) * c
+    = (a * b) * c) -| case
+  else a = successor a',
+      a * (b * c)
+    = successor a' * (b * c) -| case
+    = a' * (b * c) + b * c
+    = (a' * b) * c + b * c -| multiply_associative a' b c
+    = (a' * b + b) * c -| right_distributive _ _ _
+    = (successor a' * b) * c
+    = (a * b) * c -| case.
+
+Theorem multiply_identity_left: forall a, a * successor zero = a,
+Proof:
+    a * successor zero
+  = a * zero + a -| multiply_successor a zero
+  = zero + a -| multiply_zero a
+  = a -| zero_add.
+
+Theorem multiply_identity_right: forall a, successor zero * a = a,
+Proof:
+    successor zero * a
+  = zero * a + a
+  = zero + a
+  = a -| zero_add a.
+
