@@ -193,56 +193,75 @@ struct pretty_print_state {
     struct name_buffer names;
 };
 
+enum print_pos {
+    PRINT_NAKED,
+    PRINT_PARAM_SPEC,
+    PRINT_ARG_SUBEXPR
+};
+
 void pretty_print_expr_rec(
     struct expr *it,
-    bool is_subexpr,
+    enum print_pos print_pos,
     struct pretty_print_state *state
 ) {
-    bool print_parens = is_subexpr
-        && (it->lambda_intro_count > 0
+    bool print_parens = false;
+    switch (print_pos) {
+        case PRINT_NAKED:
+            print_parens = false;
+            break;
+        case PRINT_PARAM_SPEC:
+            /* Nested arrows are confusing, but type families are fine. */
+            print_parens = it->lambda_intro_count > 0
+                || it->pi_intro_count > 0;
+            break;
+        case PRINT_ARG_SUBEXPR:
+            /* Already in an arg, args need to be wrapped further. */
+            print_parens = it->lambda_intro_count > 0
                 || it->pi_intro_count > 0
-                || it->arg_count > 0);
+                || it->arg_count > 0;
+            break;
+    }
 
     if (print_parens) printf("(");
 
     if (it->lambda_intro_count > 0) {
-        printf("\\");
         struct parameter_spec *specs =
             (struct parameter_spec*)&it->lambda_intro_types[1];
         for (int i = 0; i < it->lambda_intro_count; i++) {
             struct parameter_spec *spec = &specs[i];
+
+            printf("\\");
+            put_str(spec->name);
+            printf(": ");
+            pretty_print_expr_rec(&spec->type, true, state);
+
+            printf(" -> ");
+
             struct name_tracker *new_name = buffer_addn(state->names, 1);
             new_name->name = spec->name;
             /* TODO: name mangling */
-
-            put_str(spec->name);
-            printf(": ");
-            pretty_print_expr_rec(&spec->type, false, state);
-
-            if (i < it->lambda_intro_count - 1) printf(",");
-            printf(" ");
         }
-
-        printf("-> ");
     }
 
     if (it->pi_intro_count > 0) {
-        printf("Pi ");
         struct parameter_spec *specs =
             (struct parameter_spec*)&it->lambda_intro_types[1];
         specs += it->lambda_intro_count;
         for (int i = 0; i < it->pi_intro_count; i++) {
             struct parameter_spec *spec = &specs[i];
-            struct name_tracker *new_name = buffer_addn(state->names, 1);
-            new_name->name = spec->name;
-            /* TODO: name mangling */
 
-            put_str(spec->name);
-            printf(": ");
-            pretty_print_expr_rec(&spec->type, false, state);
+            if (spec->name.data) {
+                put_str(spec->name);
+                printf(": ");
+            }
+            pretty_print_expr_rec(&spec->type, true, state);
 
             if (i < it->pi_intro_count - 1) printf(",");
             printf(" ");
+
+            struct name_tracker *new_name = buffer_addn(state->names, 1);
+            new_name->name = spec->name;
+            /* TODO: name mangling */
         }
 
         printf("-> ");
@@ -314,7 +333,7 @@ int main(int arg_count, char **args) {
             &specs[1].type.lambda_intro_types,
             1
         );
-        b_specs[0].name = c_str("_");
+        b_specs[0].name = (struct str){0};
         b_specs[0].type = (struct expr){.head_type = EXPR_VAR, .head_var_index = 0};
 
         specs[1].type.head_type = EXPR_SORT;
