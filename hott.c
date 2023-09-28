@@ -106,6 +106,29 @@ struct expr {
     struct shared_buffer_header *arg_buffer;
 };
 
+struct destroy_expr_frame {
+    struct expr *it;
+    size_t lambda_intros_destroyed;
+
+    size_t args_destroyed;
+};
+
+struct destroy_expr_stack {
+    struct destroy_expr_frame *it;
+    size_t count;
+    size_t capacity;
+};
+
+void copy_expr(struct expr *out, struct expr *in) {
+    if (in->lambda_intro_types) {
+        in->lambda_intro_types->reference_count += 1;
+    }
+    if (in->arg_buffer) {
+        in->arg_buffer->reference_count += 1;
+    }
+    if (out) *out = *in;
+}
+
 struct expr *expr_buffer_addn(
     struct shared_buffer_header **ptr_out,
     size_t n
@@ -122,13 +145,7 @@ struct expr *expr_buffer_addn(
         struct expr *copied_vals =
             (struct expr*)&(*ptr_out)[1];
         for (int i = 0; i < copied_count; i++) {
-            struct expr *it = &copied_vals[i];
-            if (it->lambda_intro_types) {
-                it->lambda_intro_types->reference_count += 1;
-            }
-            if (it->arg_buffer) {
-                it->arg_buffer->reference_count += 1;
-            }
+            copy_expr(NULL, &copied_vals[i]);
         }
     }
 
@@ -156,17 +173,40 @@ struct parameter_spec *parameter_spec_buffer_addn(
         struct parameter_spec *copied_vals =
             (struct parameter_spec*)&(*ptr_out)[1];
         for (int i = 0; i < copied_count; i++) {
-            struct expr *it = &copied_vals[i].type;
-            if (it->lambda_intro_types) {
-                it->lambda_intro_types->reference_count += 1;
-            }
-            if (it->arg_buffer) {
-                it->arg_buffer->reference_count += 1;
-            }
+            copy_expr(NULL, &copied_vals[i].type);
         }
     }
 
     return result;
+}
+
+void destroy_expr(struct expr *it) {
+    if (it->lambda_intro_types) {
+        it->lambda_intro_types->reference_count -= 1;
+        if (it->lambda_intro_types->reference_count == 0) {
+            size_t count = it->lambda_intro_types->elem_count;
+            printf("Destroying lambda specs. (%llu params)\n", count);
+            struct parameter_spec *specs =
+                (struct parameter_spec*)&it->lambda_intro_types[1];
+            for (int i = 0; i < count; i++) {
+                destroy_expr(&specs[i].type);
+            }
+            free(it->lambda_intro_types);
+        }
+    }
+    if (it->arg_buffer) {
+        it->arg_buffer->reference_count -= 1;
+        if (it->arg_buffer->reference_count == 0) {
+            size_t count = it->arg_buffer->elem_count;
+            printf("Destroying arg list. (%llu args)\n", count);
+            struct expr *exprs =
+                (struct expr*)&it->arg_buffer[1];
+            for (int i = 0; i < count; i++) {
+                destroy_expr(&exprs[i]);
+            }
+            free(it->arg_buffer);
+        }
+    }
 }
 
 struct global_definition {
@@ -373,6 +413,9 @@ int main(int arg_count, char **args) {
 
     printf("Expr: ");
     pretty_print_expr(&it);
+    printf("\n");
+
+    destroy_expr(&it);
 
     return 0;
 }
