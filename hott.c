@@ -463,6 +463,33 @@ void deepen_expr_context(
 }
 
 bool expr_eq(struct expr *a, struct expr *b) {
+    if (a->lambda_intro_count != b->lambda_intro_count) return false;
+    if (a->pi_intro_count != b->pi_intro_count) return false;
+    size_t intro_count = a->lambda_intro_count + a->pi_intro_count;
+    struct parameter_spec *a_specs =
+        (struct parameter_spec*)&a->lambda_intro_types[1];
+    struct parameter_spec *b_specs =
+        (struct parameter_spec*)&b->lambda_intro_types[1];
+    for (int i = 0; i < intro_count; i++) {
+        struct parameter_spec *a_spec = &a_specs[i];
+        struct parameter_spec *b_spec = &b_specs[i];
+        if (!expr_eq(&a_spec->type, &b_spec->type)) return false;
+    }
+
+    if (a->head_type != b->head_type) return false;
+
+    if (a->head_type == EXPR_VAR || a->head_type == EXPR_GLOBAL) {
+        if (a->head_var_index != b->head_var_index) return false;
+    }
+    /* else arity 0, heads are automatically equal. */
+
+    if (a->arg_count != b->arg_count) return false;
+    struct expr *a_args = (struct expr*)&a->arg_buffer[1];
+    struct expr *b_args = (struct expr*)&b->arg_buffer[1];
+    for (size_t i = 0; i < a->arg_count; i++) {
+        if (!expr_eq(&a_args[i], &b_args[i])) return false;
+    }
+
     return true;
 }
 
