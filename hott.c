@@ -388,31 +388,25 @@ void pretty_print_expr_rec(
 
     switch (it->head_type) {
         case EXPR_NULL:
-        {
             printf("?");
             break;
-        }
         case EXPR_APPLY_LAMBDA:
-        {
             /* Do nothing. */
             break;
-        }
         case EXPR_VAR:
-        {
-            put_str(state->names.data[it->head_var_index].name);
+            if (it->head_var_index < state->names.count) {
+                put_str(state->names.data[it->head_var_index].name);
+            } else {
+                printf("?v%d", it->head_var_index);
+            }
             break;
-        }
         case EXPR_GLOBAL:
-        {
             printf("global");
             /* TODO */
             break;
-        }
         case EXPR_SORT:
-        {
             printf("Type");
             break;
-        }
     }
 
     struct expr *args = (struct expr*)&it->arg_buffer[1];
@@ -438,6 +432,34 @@ void pretty_print_expr(struct expr *it) {
 void pretty_print_expr_open(struct expr *it, struct name_buffer *names) {
     struct pretty_print_state state = {0, 80, *names};
     pretty_print_expr_rec(it, PRINT_NAKED, &state);
+}
+
+void deepen_expr_context(
+    struct expr *it,
+    size_t from_depth,
+    size_t to_depth
+) {
+    /* TODO: short circuit this to avoid all the make_mut? */
+    parameter_spec_buffer_make_mut(&it->lambda_intro_types);
+    size_t intro_count = it->lambda_intro_count + it->pi_intro_count;
+    struct parameter_spec *specs =
+        (struct parameter_spec*)&it->lambda_intro_types[1];
+    for (int i = 0; i < intro_count; i++) {
+        struct parameter_spec *spec = &specs[i];
+        deepen_expr_context(&spec->type, from_depth, to_depth);
+    }
+
+    if (it->head_type == EXPR_VAR) {
+        if (it->head_var_index >= from_depth) {
+            it->head_var_index += to_depth - from_depth;
+        }
+    }
+
+    expr_buffer_make_mut(&it->arg_buffer);
+    struct expr *args = (struct expr*)&it->arg_buffer[1];
+    for (size_t i = 0; i < it->arg_count; i++) {
+        deepen_expr_context(&args[i], from_depth, to_depth);
+    }
 }
 
 bool expr_eq(struct expr *a, struct expr *b) {
@@ -513,6 +535,13 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
         case EXPR_VAR:
         {
             copy_expr(&curr_type, &state->var_types.data[it->head_var_index]);
+            /* If binding types contain nested pi/lambda contexts, then we need
+               to rewrite them into this context. */
+            deepen_expr_context(
+                &curr_type,
+                it->head_var_index,
+                state->var_types.count
+            );
             break;
         }
         case EXPR_GLOBAL:
