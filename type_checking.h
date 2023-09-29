@@ -40,6 +40,8 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
         buffer_push(state->var_types, spec->type);
     }
 
+    size_t ctx_depth = state->var_types.count;
+
     struct expr curr_type = {0};
 
     switch (it->head_type) {
@@ -93,34 +95,36 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
             fprintf(stderr, "Error: Tried to apply type that wasn't a pi type. (beta reduction of pi types is not yet implemented.)\n");
             exit(EXIT_FAILURE);
         }
-        struct parameter_spec *param_types = parameter_spec_split_destructive(
-            &curr_type.lambda_intro_types,
-            args_remaining
-        );
-        curr_type.pi_intro_count -= args_remaining;
+        struct parameter_spec *param_types =
+            (struct parameter_spec*)&curr_type.lambda_intro_types[1];
 
         struct expr *args = (struct expr*)&it->arg_buffer[1];
         for (size_t i = 0; i < args_remaining; i++) {
             struct expr *arg = &args[i + skip];
             struct expr arg_type = check_type_rec(arg, state);
-            struct expr *expected_type = &param_types[i].type;
-            if (!expr_eq(&arg_type, expected_type)) {
+            struct expr expected_type = subst_exprs(
+                ctx_depth, &param_types[i].type, false,
+                ctx_depth, i, &args[skip]
+            );
+            if (!expr_eq(&arg_type, &expected_type)) {
                 printf("Type checking error: A function expected ");
-                pretty_print_expr_open(expected_type, &state->names);
+                pretty_print_expr_open(&expected_type, &state->names);
                 printf(", but it was applied to ");
                 pretty_print_expr_open(arg, &state->names);
                 printf(", which is of type ");
                 pretty_print_expr_open(&arg_type, &state->names);
                 printf(".\n");
             }
+            destroy_expr(&expected_type);
             destroy_expr(&arg_type);
         }
 
-        for (int i = 0; i < args_remaining; i++) {
-            destroy_expr(&param_types[i].type);
-        }
-        /* TODO: Reuse this buffer between incremental parameter extractions? */
-        free(param_types);
+        struct expr result_type = subst_exprs(
+            ctx_depth, &curr_type, true,
+            ctx_depth, args_remaining, &args[skip]
+        );
+        destroy_expr(&curr_type);
+        curr_type = result_type;
     }
 
     if (it->pi_intro_count > 0) {
