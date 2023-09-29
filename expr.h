@@ -683,6 +683,7 @@ struct expr subst_exprs(
                     target->arg_count + 1
                 );
                 result_args[0] = arg;
+                result_args = &result_args[1];
             }
         } else {
             /* This variable is from the common context of target and args,

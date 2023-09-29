@@ -6,80 +6,109 @@
 #include "expr.h"
 #include "type_checking.h"
 
+static void add_input(struct expr *it, char *name, struct expr type) {
+    if (it->pi_intro_count != 0) {
+        fprintf(stderr, "Error: Can't append a lambda introduction to a pi type expression.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    it->lambda_intro_count += 1;
+    struct parameter_spec *spec = parameter_spec_buffer_addn(
+        &it->lambda_intro_types,
+        1
+    );
+    spec->name = c_str(name);
+    spec->type = type;
+}
+
+static void add_pi(struct expr *it, char *name, struct expr type) {
+    it->pi_intro_count += 1;
+    struct parameter_spec *spec = parameter_spec_buffer_addn(
+        &it->lambda_intro_types,
+        1
+    );
+    spec->name = c_str(name);
+    spec->type = type;
+}
+
+static void add_exp(struct expr *it, struct expr type) {
+    it->pi_intro_count += 1;
+    struct parameter_spec *spec = parameter_spec_buffer_addn(
+        &it->lambda_intro_types,
+        1
+    );
+    spec->name = (struct str){0};
+    spec->type = type;
+}
+
+static void set_head(struct expr *it, struct expr reference) {
+    it->head_type = reference.head_type;
+    it->head_var_index = reference.head_var_index;
+}
+
+static void set_body(struct expr *it, struct expr reference) {
+    it->head_type = reference.head_type;
+    it->head_var_index = reference.head_var_index;
+    it->arg_count = reference.arg_count;
+    it->arg_buffer = reference.arg_buffer;
+}
+
+static void apply_body(struct expr *it, struct expr arg) {
+    it->arg_count += 1;
+    struct expr *out = expr_buffer_addn(&it->arg_buffer, 1);
+    *out = arg;
+}
+
+static struct expr apply(struct expr f, struct expr x) {
+    if (f.lambda_intro_count == 0 && f.pi_intro_count == 0) {
+        apply_body(&f, x);
+        return f;
+    }
+    /* else */
+    struct expr result = {.head_type = EXPR_APPLY_LAMBDA};
+    apply_body(&result, f);
+    apply_body(&result, x);
+    return result;
+}
+
+static const struct expr universe = {.head_type = EXPR_SORT};
+
+static struct expr var(size_t index) {
+    return (struct expr){.head_type = EXPR_VAR, .head_var_index = index};
+}
+
 /* Build a test expression, pretty print it, type check it, print the type,
    then try destroying both. */
-int main(int arg_count, char **args) {
+void pi_test(bool closed) {
     struct check_type_state check_type_state = {0};
 
     struct expr it = {0};
-    bool closed = true;
-    it.lambda_intro_count = closed ? 4 : 3;
-    struct parameter_spec *specs = parameter_spec_buffer_addn(
-        &it.lambda_intro_types,
-        it.lambda_intro_count
-    );
-    int i = 0;
     if (closed) {
-        specs[i].name = c_str("A");
-        specs[i].type = (struct expr){.head_type = EXPR_SORT};
-        i++;
+        add_input(&it, "A", universe);
     } else {
-        buffer_push(
-            check_type_state.var_types,
-            (struct expr){.head_type = EXPR_SORT}
-        );
-        name_buffer_push(
-            &check_type_state.names,
-            c_str("A")
-        );
+        buffer_push(check_type_state.var_types, universe);
+        name_buffer_push(&check_type_state.names, c_str("A"));
     }
-    specs[i].name = c_str("B");
-    specs[i].type = (struct expr){0};
     {
-        specs[i].type.pi_intro_count = 1;
-        struct parameter_spec *b_specs = parameter_spec_buffer_addn(
-            &specs[i].type.lambda_intro_types,
-            1
-        );
-        b_specs[0].name = (struct str){0};
-        b_specs[0].type = (struct expr){.head_type = EXPR_VAR, .head_var_index = 0};
-
-        specs[i].type.head_type = EXPR_SORT;
+        struct expr b = {0};
+        add_exp(&b, var(0));
+        set_head(&b, universe);
+        add_input(&it, "B", b);
     }
-    i++;
-    specs[i].name = c_str("f");
-    specs[i].type = (struct expr){0};
     {
-        specs[i].type.pi_intro_count = 1;
-        struct parameter_spec *f_specs = parameter_spec_buffer_addn(
-            &specs[i].type.lambda_intro_types,
-            1
-        );
-        f_specs[0].name = c_str("x");
-        f_specs[0].type = (struct expr){.head_type = EXPR_VAR, .head_var_index = 0};
+        struct expr f = {0};
 
-        specs[i].type.head_type = EXPR_VAR;
-        specs[i].type.head_var_index = 1;
+        add_pi(&f, "x", var(0));
 
-        specs[i].type.arg_count = 1;
-        struct expr *pi_output_args = expr_buffer_addn(
-            &specs[i].type.arg_buffer,
-            1
-        );
-        pi_output_args[0] = (struct expr){.head_type = EXPR_VAR, .head_var_index = 2};
+        set_head(&f, var(1));
+        apply_body(&f, var(2));
+
+        add_input(&it, "f", f);
     }
-    i++;
-    specs[i].name = c_str("x");
-    specs[i].type = (struct expr){.head_type = EXPR_VAR, .head_var_index = 0};
-    it.head_type = EXPR_VAR;
-    it.head_var_index = 2;
+    add_input(&it, "x", var(0));
 
-    it.arg_count = 1;
-    struct expr *body_args = expr_buffer_addn(
-        &it.arg_buffer,
-        1
-    );
-    body_args[0] = (struct expr){.head_type = EXPR_VAR, .head_var_index = 3};
+    set_head(&it, var(2));
+    apply_body(&it, var(3));
 
     printf("Expr: ");
     pretty_print_expr_open(&it, &check_type_state.names);
@@ -98,20 +127,10 @@ int main(int arg_count, char **args) {
 
     {
         struct expr a_val = {0};
-        struct parameter_spec *spec;
 
-        spec = parameter_spec_buffer_addn(&a_val.lambda_intro_types, 1);
-        spec->name = c_str("C");
-        spec->type = (struct expr){.head_type = EXPR_SORT};
-
-        spec = parameter_spec_buffer_addn(&a_val.lambda_intro_types, 1);
-        spec->name = (struct str){0};
-        spec->type = (struct expr){.head_type = EXPR_VAR, .head_var_index = 0};
-
-        a_val.pi_intro_count = a_val.lambda_intro_types->elem_count;
-
-        a_val.head_type = EXPR_VAR;
-        a_val.head_var_index = 0;
+        add_pi(&a_val, "C", universe);
+        add_exp(&a_val, var(0));
+        set_head(&a_val, var(0));
 
         printf("\nSubstituting A <- ");
         pretty_print_expr(&a_val);
@@ -142,6 +161,56 @@ int main(int arg_count, char **args) {
 
     printf("\nDestroying expr.\n");
     destroy_expr(&it);
+}
+
+void beta(void) {
+    /* We need an expression that requires beta evaluation to type-check
+       correctly. It doesn't even need to be complicated, could just be
+       a function (\A.A)A -> (\A.A)A applied to an A and vice versa.
+       We also want to test substitution of functions into expressions, so we
+       might even want to define this as a `(T: (Type -> Type) -> T A -> T A)`
+       and apply it to (\A.A).
+
+       \A: Type -> \f: (A -> A) -> \g: (T: (Type -> Type) -> T A -> T A)
+         -> \x: A -> f (g (\B: Type -> B) x)
+
+       */
+    struct expr it = {0};
+
+    add_input(&it, "A", universe);
+
+    struct expr f = {0};
+    add_exp(&f, var(0));
+    set_head(&f, var(0));
+    add_input(&it, "f", f);
+
+    struct expr g = {0};
+    struct expr t = {0};
+    add_exp(&t, universe);
+    set_head(&t, universe);
+    add_pi(&g, "T", t);
+    add_exp(&g, apply(var(2), var(0)));
+    set_body(&g, apply(var(2), var(0)));
+    add_input(&it, "g", g);
+
+    add_input(&it, "x", var(0));
+
+    struct expr t_val = {0};
+    add_input(&t_val, "B", universe);
+    set_head(&t_val, var(4));
+    set_body(&it, apply(var(1), apply(apply(var(2), t_val), var(3))));
+
+    printf("Expr := ");
+    pretty_print_expr(&it);
+    printf("\n\n");
+    struct expr it_type = check_type(&it);
+    printf("\nType := ");
+    pretty_print_expr(&it_type);
+    printf("\n");
+}
+
+int main(int argc, char **argv) {
+    beta();
 
     return 0;
 }
