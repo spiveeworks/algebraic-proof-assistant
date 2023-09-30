@@ -143,19 +143,6 @@ struct expr {
     struct shared_buffer_header *arg_buffer;
 };
 
-struct destroy_expr_frame {
-    struct expr *it;
-    size_t lambda_intros_destroyed;
-
-    size_t args_destroyed;
-};
-
-struct destroy_expr_stack {
-    struct destroy_expr_frame *it;
-    size_t count;
-    size_t capacity;
-};
-
 void copy_expr(struct expr *out, struct expr *in) {
     if (in->lambda_intro_types) {
         in->lambda_intro_types->reference_count += 1;
@@ -249,54 +236,6 @@ struct parameter_spec *parameter_spec_buffer_addn(
     }
 
     return result;
-}
-
-struct parameter_spec *parameter_spec_split_destructive(
-    struct shared_buffer_header **ptr_out,
-    size_t n
-) {
-    if (n == 0) return NULL;
-
-    parameter_spec_buffer_make_mut(ptr_out);
-    struct shared_buffer_header *ptr = *ptr_out;
-
-    struct parameter_spec *new_specs = malloc(n * sizeof(struct parameter_spec));
-    struct parameter_spec *old_specs = (struct parameter_spec*)&ptr[1];
-    memcpy(new_specs, old_specs, n * sizeof(struct parameter_spec));
-    size_t new_count = ptr->elem_count - n;
-    ptr->elem_count = new_count;
-    memmove(old_specs, &old_specs[n], new_count * sizeof(struct parameter_spec));
-
-    return new_specs;
-}
-
-void destroy_expr(struct expr *it) {
-    if (it->lambda_intro_types) {
-        it->lambda_intro_types->reference_count -= 1;
-        if (it->lambda_intro_types->reference_count == 0) {
-            size_t count = it->lambda_intro_types->elem_count;
-            printf("Destroying lambda specs. (%llu params)\n", count);
-            struct parameter_spec *specs =
-                (struct parameter_spec*)&it->lambda_intro_types[1];
-            for (int i = 0; i < count; i++) {
-                destroy_expr(&specs[i].type);
-            }
-            free(it->lambda_intro_types);
-        }
-    }
-    if (it->arg_buffer) {
-        it->arg_buffer->reference_count -= 1;
-        if (it->arg_buffer->reference_count == 0) {
-            size_t count = it->arg_buffer->elem_count;
-            printf("Destroying arg list. (%llu args)\n", count);
-            struct expr *exprs =
-                (struct expr*)&it->arg_buffer[1];
-            for (int i = 0; i < count; i++) {
-                destroy_expr(&exprs[i]);
-            }
-            free(it->arg_buffer);
-        }
-    }
 }
 
 /* Useful for tracking contexts during expression type-checking. */
@@ -453,6 +392,49 @@ void pretty_print_expr_open(struct expr *it, struct name_buffer *names) {
     pretty_print_expr_rec(it, PRINT_NAKED, &state);
 }
 
+void destroy_expr(struct expr *it) {
+#if 0
+    if (it->lambda_intro_types
+        && it->lambda_intro_types->reference_count == 1)
+    {
+        printf("Destroying lambda specs of: ");
+        pretty_print_expr(it);
+        printf("\n");
+    }
+    if (it->arg_buffer
+        && it->arg_buffer->reference_count == 1)
+    {
+        printf("Destroying arg buffer of: ");
+        pretty_print_expr(it);
+        printf("\n");
+    }
+#endif
+    if (it->lambda_intro_types) {
+        it->lambda_intro_types->reference_count -= 1;
+        if (it->lambda_intro_types->reference_count == 0) {
+            size_t count = it->lambda_intro_types->elem_count;
+            struct parameter_spec *specs =
+                (struct parameter_spec*)&it->lambda_intro_types[1];
+            for (int i = 0; i < count; i++) {
+                destroy_expr(&specs[i].type);
+            }
+            free(it->lambda_intro_types);
+        }
+    }
+    if (it->arg_buffer) {
+        it->arg_buffer->reference_count -= 1;
+        if (it->arg_buffer->reference_count == 0) {
+            size_t count = it->arg_buffer->elem_count;
+            struct expr *exprs =
+                (struct expr*)&it->arg_buffer[1];
+            for (int i = 0; i < count; i++) {
+                destroy_expr(&exprs[i]);
+            }
+            free(it->arg_buffer);
+        }
+    }
+}
+
 bool expr_eq(struct expr *a, struct expr *b) {
     if (a->lambda_intro_count != b->lambda_intro_count) return false;
     if (a->pi_intro_count != b->pi_intro_count) return false;
@@ -521,6 +503,115 @@ void deepen_expr_context(
     for (size_t i = 0; i < it->arg_count; i++) {
         deepen_expr_context(&args[i], from_depth, to_depth);
     }
+}
+
+/* Whenever we manipulate the head of an expression, we end up needing to
+   place a new expression where the old head was. In doing so we then need to
+   concatenate that expression with the old introduction rules, set its head
+   and args to the head and args of the new expression, and while we
+   are there we might as well allocate room for the old arguments as well. This
+   function does those 3 things. `it` is modified and `to_add` is consumed in
+   the process, but neither have to own their intro list/arg list uniquely;
+   `it` must have no args, however. */
+struct expr *concat_intros_set_head_alloc_args(
+    struct expr *it,
+    struct expr to_add,
+    size_t additional_arg_count
+) {
+    if (it->arg_count != 0) {
+        fprintf(stderr, "Error: Tried to concat intros to an expression that "
+                "already had arguments?\n");
+        exit(EXIT_FAILURE);
+    }
+
+    size_t intro_count = it->lambda_intro_count + it->pi_intro_count;
+    size_t new_intro_count = to_add.lambda_intro_count + to_add.pi_intro_count;
+    if (intro_count == 0 && additional_arg_count == 0) {
+        /* Target is literally just a single variable. Use to_add as is. */
+        *it = to_add;
+    } else if ((it->pi_intro_count == 0 || to_add.lambda_intro_count == 0)
+        && additional_arg_count == 0)
+    {
+        /* Lambda (Lambda Pi) or Lambda Pi (Pi), both just concatenate into a
+           single intro list. */
+        it->lambda_intro_count += to_add.lambda_intro_count;
+        it->pi_intro_count += to_add.pi_intro_count;
+        if (new_intro_count > 0) {
+            struct parameter_spec *new_specs = parameter_spec_buffer_addn(
+                &it->lambda_intro_types,
+                new_intro_count
+            );
+            struct parameter_spec *arg_specs =
+                (struct parameter_spec*)&to_add.lambda_intro_types[1];
+            if (to_add.lambda_intro_types->reference_count > 1) {
+                /* to_add.lambda_intro_types is shared, so copy out of it, and
+                   then decrement the reference count, since we don't use
+                   to_add other than to steal its arg_buffer. */
+                for (int i = 0; i < new_intro_count; i++) {
+                    new_specs[i].name = arg_specs[i].name;
+                    copy_expr(&new_specs[i].type, &arg_specs[i].type);
+                }
+                to_add.lambda_intro_types->reference_count -= 1;
+            } else {
+                /* We own to_add.lambda_intro_types, so just move out of it,
+                   and free the (now unused) buffer. */
+                memcpy(
+                    new_specs,
+                    arg_specs,
+                    new_intro_count * sizeof(struct parameter_spec)
+                );
+                free(to_add.lambda_intro_types);
+            }
+        }
+        /* TODO: What if to_add.lambda_intro_types is allocated but unused?
+           Should be impossible right now, since we don't slice into buffers
+           but actually share them wholesale, but this may become a case to
+           keep in mind. */
+
+        it->head_type = to_add.head_type;
+        it->head_var_index = to_add.head_var_index;
+
+        it->arg_count = to_add.arg_count;
+        it->arg_buffer = to_add.arg_buffer;
+
+        /* We stole to_add.arg_buffer, and either freed or decremented
+           to_add.lambda_intro_types, so to_add is already cleaned up, and
+           should NOT be explicitly destroyed. */
+    } else if (new_intro_count == 0) {
+        /* Lambda Pi (f w x) y z, concatenate the args. */
+        it->head_type = to_add.head_type;
+        it->head_var_index = to_add.head_var_index;
+
+        /* Steal the args, and then let later code addn to it as if it were an
+           empty list. Funnily enough this ends up being equivalent code to the
+           previous case, but it's easier to just write these four lines as a
+           separate case, than mangle the previous case's condition more. */
+        it->arg_count = to_add.arg_count;
+        it->arg_buffer = to_add.arg_buffer;
+        /* to_add.lambda_intro_types is empty, and to_add.arg_buffer has been
+           moved out, so to_add is already cleaned up, and should NOT be
+           explicitly destroyed. */
+    } else {
+        /* Most general case, Lambda Pi (Lambda Pi f w x) y z, write this as
+           Lambda Pi APPLY (Lambda Pi f w x) y z */
+        it->head_type = EXPR_APPLY_LAMBDA;
+
+        it->arg_count = 1;
+        /* Allocate enough for to_add, and additional_arg_count */
+        struct expr *result_args = expr_buffer_addn(
+            &it->arg_buffer,
+            additional_arg_count + 1
+        );
+        /* Set the first arg to to_add, and return the rest as the allocation
+           we promised. */
+        result_args[0] = to_add;
+        return &result_args[1];
+    }
+
+    /* In the EXPR_APPLY_LAMBDA case above we allocate room for to_add and
+       additional_arg_count at the same time, but in all other cases we need to
+       explicitly allocate the rest ourselves. */
+    return expr_buffer_addn(&it->arg_buffer, additional_arg_count);
 }
 
 /* Fill in the top n variables of the current context. */
@@ -608,83 +699,12 @@ struct expr subst_exprs(
                 deepen_expr_context(&arg, arg_depth, target_depth + intro_count);
             }
 
-            /* Concatenate result with arg */
-            size_t arg_intro_count =
-                arg.lambda_intro_count + arg.pi_intro_count;
-            if (intro_count == 0 && target->arg_count == 0) {
-                /* Target is literally just a single variable. Use arg as is. */
-                result = arg;
-            } else if ((target->pi_intro_count == 0 || arg.lambda_intro_count == 0) && target->arg_count == 0) {
-                /* Lambda (Lambda Pi) or Lambda Pi (Pi), both just concatenate
-                   into a single intro list. */
-                result.lambda_intro_count += arg.lambda_intro_count;
-                result.pi_intro_count += arg.pi_intro_count;
-                if (arg_intro_count > 0) {
-                    struct parameter_spec *new_specs = parameter_spec_buffer_addn(
-                        &result.lambda_intro_types,
-                        arg_intro_count
-                    );
-                    struct parameter_spec *arg_specs =
-                        (struct parameter_spec*)&arg.lambda_intro_types[1];
-                    if (arg.lambda_intro_types->reference_count > 1) {
-                        /* arg.lambda_intro_types is shared, so copy out of it,
-                           and then decrement the reference count, since we
-                           don't use arg other than to steal its arg_buffer. */
-                        for (int i = 0; i < arg_intro_count; i++) {
-                            new_specs[i].name = arg_specs[i].name;
-                            copy_expr(&new_specs[i].type, &arg_specs[i].type);
-                        }
-                        arg.lambda_intro_types->reference_count -= 1;
-                    } else {
-                        /* We own arg.lambda_intro_types, so just move out of
-                           it, and free the (now unused) buffer. */
-                        memcpy(new_specs, arg_specs, arg_intro_count * sizeof(struct parameter_spec));
-                        free(arg.lambda_intro_types);
-                    }
-                }
-                /* TODO: What if arg.lambda_intro_types is allocated but
-                   unused? Should be impossible right now, since we don't slice
-                   into buffers but actually share them wholesale, but this may
-                   become a case to keep in mind. */
-
-                result.head_type = arg.head_type;
-                result.head_var_index = arg.head_var_index;
-
-                result.arg_count = arg.arg_count;
-                result.arg_buffer = arg.arg_buffer;
-
-                /* We stole arg.arg_buffer, and either freed or decremented
-                   arg.lambda_intro_types, so arg is already cleaned up, and
-                   should NOT be explicitly destroyed. */
-            } else if (arg_intro_count == 0) {
-                /* Lambda Pi (f w x) y z, concatenate the args. */
-                result.head_type = arg.head_type;
-                result.head_var_index = arg.head_var_index;
-
-                /* Steal the args, and then let later code addn to it as if it
-                   were an empty list. Funnily enough this ends up being
-                   equivalent code to the previous case, but it's easier to
-                   just write these four lines as a separate case, than mangle
-                   the previous case's condition more. */
-                result.arg_count = arg.arg_count;
-                result.arg_buffer = arg.arg_buffer;
-                /* arg.lambda_intro_types is empty, and arg.arg_buffer has been
-                   moved out, so arg is already cleaned up, and should NOT be
-                   explicitly destroyed. */
-            } else {
-                /* Most general case, Lambda Pi (Lambda Pi f w x) y z,
-                   write this as Lambda Pi APPLY (Lambda Pi f w x) y z */
-                result.head_type = EXPR_APPLY_LAMBDA;
-
-                result.arg_count = 1;
-                /* Allocate enough for arg, and target->args */
-                result_args = expr_buffer_addn(
-                    &result.arg_buffer,
-                    target->arg_count + 1
-                );
-                result_args[0] = arg;
-                result_args = &result_args[1];
-            }
+            /* Concatenate */
+            result_args = concat_intros_set_head_alloc_args(
+                &result,
+                arg,
+                target->arg_count
+            );
         } else {
             /* This variable is from the common context of target and args,
                use it as-is. */
@@ -714,6 +734,68 @@ struct expr subst_exprs(
     }
 
     return result;
+}
+
+void reduce_expr_once(size_t depth, struct expr *it) {
+    if (it->head_type != EXPR_APPLY_LAMBDA) return;
+    if (it->arg_count == 0) {
+        fprintf(stderr, "Error: Got EXPR_APPLY_LAMBDA with no args?\n");
+        exit(EXIT_FAILURE);
+    }
+
+    depth += it->lambda_intro_count + it->pi_intro_count;
+
+    struct expr *args = (struct expr*)&it->arg_buffer[1];
+
+    struct expr *f = args;
+    size_t arg_count = it->arg_count - 1;
+    args = &args[1];
+
+    size_t lambda_count = f->lambda_intro_count;
+
+    /* Sub in as many args as we can, stripping off the lambdas as we go. */
+    size_t sub_count = arg_count;
+    if (sub_count > lambda_count) sub_count = lambda_count;
+    struct expr subbed;
+    if (sub_count == 0) {
+        fprintf(stderr, "Warning: Got EXPR_APPLY_LAMBDA that wasn't "
+            "beta-reducible?\n");
+        /* The goal is to substitute enough arguments that either there are no
+           lambdas left, or no arguments left, so that `it` can be concatenated
+           with this subbed result. If there are already no lambdas left, or no
+           arguments left, then the expression can be concatenated as-is. */
+        copy_expr(&subbed, it);
+    } else {
+        subbed = subst_exprs(depth, f, true, depth, sub_count, args);
+    }
+
+    /* Now piece it together. */
+    struct expr result = {0};
+    result.lambda_intro_count = it->lambda_intro_count;
+    result.pi_intro_count = it->pi_intro_count;
+    result.lambda_intro_types = it->lambda_intro_types;
+
+    size_t leftover_arg_count = arg_count - sub_count;
+    struct expr *leftover_args = concat_intros_set_head_alloc_args(
+        &result,
+        subbed,
+        leftover_arg_count
+    );
+
+    for (int i = 0; i < leftover_arg_count; i++) {
+        copy_expr(&leftover_args[i], &args[sub_count + i]);
+    }
+
+    /* Hide intros that we consumed, and destroy the args that we have now
+       copied out of. */
+    it->lambda_intro_count = 0;
+    it->pi_intro_count = 0;
+    it->lambda_intro_types = NULL;
+    destroy_expr(it);
+
+    /* Now that the input is uninitialised, overwrite it with the result we
+       just calculated. */
+    *it = result;
 }
 
 #endif

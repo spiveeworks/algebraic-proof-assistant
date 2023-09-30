@@ -121,7 +121,7 @@ void pi_test(bool closed) {
         pretty_print_expr_open(&it_type, &check_type_state.names);
         printf("\n");
 
-        printf("\nDestroying type.\n");
+        /* printf("\nDestroying type.\n"); */
         destroy_expr(&it_type);
     }
 
@@ -148,22 +148,24 @@ void pi_test(bool closed) {
         );
         printf("Result: ");
         pretty_print_expr(&subbed);
+        printf("\n");
 
-        printf("\nDestroying subbed value.\n");
+        /* printf("Destroying subbed value.\n"); */
         destroy_expr(&subbed);
 
-        printf("\nDestroying type.\n");
+        /* printf("\nDestroying type.\n"); */
         destroy_expr(&a_type);
 
-        printf("\nDestroying A.\n");
+        /* printf("\nDestroying A.\n"); */
         destroy_expr(&a_val);
     }
 
-    printf("\nDestroying expr.\n");
+    /* printf("\nDestroying expr.\n"); */
     destroy_expr(&it);
+    printf("\n");
 }
 
-void beta(void) {
+void beta_test(void) {
     /* We need an expression that requires beta evaluation to type-check
        correctly. It doesn't even need to be complicated, could just be
        a function (\A.A)A -> (\A.A)A applied to an A and vice versa.
@@ -202,15 +204,22 @@ void beta(void) {
 
     printf("Expr := ");
     pretty_print_expr(&it);
-    printf("\n\n");
+    /* printf("\n\n"); */
     struct expr it_type = check_type(&it);
     printf("\nType := ");
     pretty_print_expr(&it_type);
     printf("\n");
+
+    /* printf("\nDestroying expr.\n"); */
+    destroy_expr(&it);
+
+    /* printf("\nDestroying type.\n"); */
+    destroy_expr(&it_type);
 }
 
 int main(int argc, char **argv) {
-    beta();
+    pi_test(true);
+    beta_test();
 
     return 0;
 }
