@@ -217,10 +217,43 @@ void beta_test(void) {
     destroy_expr(&it_type);
 }
 
-int main(int argc, char **argv) {
-    pi_test(true);
-    beta_test();
+void eval_test(void) {
+    struct expr const_fun = {0};
+    add_input(&const_fun, "A", universe);
+    add_input(&const_fun, "x", var(0));
+    add_input(&const_fun, "B", universe);
+    add_input(&const_fun, "y", var(2));
+    set_head(&const_fun, var(1));
 
+    struct expr id = {0};
+    add_input(&id, "C", universe);
+    add_input(&id, "x", var(0));
+    set_head(&id, var(1));
+
+    struct expr id_type = check_type(&id);
+
+    struct expr it = apply(apply(const_fun, id_type), id);
+
+    printf("Expr := ");
+    pretty_print_expr(&it);
+    printf("\n");
+    struct expr it_type = check_type(&it);
+    printf("Type := ");
+    pretty_print_expr(&it_type);
+    printf("\n");
+
+    head_normalise(&it);
+    printf("Reduced := ");
+    pretty_print_expr(&it);
+    printf("\n");
+}
+
+int main(int argc, char **argv) {
+    /* pi_test(true); */
+    /* beta_test(); */
+    eval_test();
+
+    printf("Done.\n");
     return 0;
 }
 
