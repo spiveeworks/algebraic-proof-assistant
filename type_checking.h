@@ -243,14 +243,12 @@ bool expr_unify_destructive(size_t depth, struct expr a, struct expr b) {
     return args_match;
 }
 
-/*
-bool expr_unify(struct expr *a, struct expr *b) {
-    copy_expr(NULL, a_ptr);
-    copy_expr(NULL, b_ptr);
+bool expr_unify(size_t depth, struct expr *a, struct expr *b) {
+    copy_expr(NULL, a);
+    copy_expr(NULL, b);
 
-    return expr_unify_destructive(*a_ptr, *b_ptr);
+    return expr_unify_destructive(depth, *a, *b);
 }
-*/
 
 struct check_type_state {
     struct name_buffer names;
@@ -333,6 +331,61 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
             /* Increase universe level here. */
             break;
         }
+
+        case EXPR_EQUALS:
+        {
+            /* Equals : (A: Type -> B: Type -> A = B -> A -> B -> Type) */
+            add_pi(&curr_type, "A", universe);
+            add_pi(&curr_type, "B", universe);
+
+            {
+                /* we want type_path := A = B,
+                     i.e. Equals Type Type (refl Type Type) A B
+                   So first define type_refl := refl Type Type */
+                struct expr type_refl = {0};
+                type_refl.head_type = EXPR_REFL;
+                apply_body(&type_refl, universe);
+                apply_body(&type_refl, universe);
+
+                /* now define Equals Type Type type_refl A B */
+                struct expr type_path = {0};
+                type_path.head_type = EXPR_EQUALS;
+                apply_body(&type_path, universe);
+                apply_body(&type_path, universe);
+                apply_body(&type_path, type_refl);
+                apply_body(&type_path, var(ctx_depth));
+                apply_body(&type_path, var(ctx_depth + 1));
+
+                /* Now add type_path to the inputs of Equals, lol */
+                add_exp(&curr_type, type_path);
+            }
+            /* Now add the actual endpoints of the path. */
+            add_exp(&curr_type, var(ctx_depth));
+            add_exp(&curr_type, var(ctx_depth + 1));
+            curr_type.head_type = EXPR_SORT;
+            break;
+        }
+        case EXPR_REFL:
+        {
+            add_pi(&curr_type, "A", universe);
+            add_pi(&curr_type, "x", var(ctx_depth));
+            /* Output is a proof of Equal A A (refl Type A) x x */
+            curr_type.head_type = EXPR_EQUALS;
+            apply_body(&curr_type, var(ctx_depth));
+            apply_body(&curr_type, var(ctx_depth));
+            {
+                /* Build (refl Type A) */
+                struct expr a_refl = {0};
+                a_refl.head_type = EXPR_REFL;
+                apply_body(&a_refl, universe);
+                apply_body(&a_refl, var(ctx_depth));
+
+                apply_body(&curr_type, a_refl);
+            }
+            apply_body(&curr_type, var(ctx_depth + 1));
+            apply_body(&curr_type, var(ctx_depth + 1));
+            break;
+        }
     }
 
     size_t skip = 0;
@@ -359,7 +412,9 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
                 ctx_depth, &param_types[i].type, false,
                 ctx_depth, i, &args[skip]
             );
-            if (!expr_unify_destructive(ctx_depth, arg_type, expected_type)) {
+            /* Unfortunately we can't unify these destructively, as we may need
+               the terms themselves for reporting type errors. */
+            if (!expr_unify(ctx_depth, &arg_type, &expected_type)) {
                 printf("Type checking error: A function expected ");
                 pretty_print_expr_open(&expected_type, &state->names);
                 printf(", but it was applied to ");
@@ -368,6 +423,7 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
                 pretty_print_expr_open(&arg_type, &state->names);
                 printf(".\n");
             }
+            /* Now manually destroy them. */
             destroy_expr(&expected_type);
             destroy_expr(&arg_type);
         }

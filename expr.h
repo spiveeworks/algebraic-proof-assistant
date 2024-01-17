@@ -118,17 +118,27 @@ enum expr_head_type {
     EXPR_SORT,
 
     /* Equality stuff */
-    /* (A: Type -> A -> A -> Type) */
+    /* (A: Type -> B: Type -> A = B -> A -> B -> Type) */
     EXPR_EQUALS,
     /* (A: Type -> x: A -> x = x) */
+    /* Where x = y means Equals A A (refl Type A) x y. */
     EXPR_REFL,
     /* (A: Type -> B: Type -> A = B -> A -> B) */
     EXPR_TRANSPORT,
 
     /* Path stuff */
-    /* (A: Type -> B: Type -> f: (A -> B)
-           -> x: A -> y: A -> x = y -> f x = f y) */
-    EXPR_CONG,
+    /* (A: Type -> B: (A -> Type) -> f: (x: A -> B x)
+           -> x: A -> y: A -> p: x = y
+           -> Equal (cong A Type B x y p) (f x) (f y)) */
+    EXPR_PICONG,
+    /* Where
+       cong: (A: Type -> B: Type -> f: (A -> B)
+           -> x: A -> y: A -> x = y -> f x = f y)
+       cong A B f x y p = picong A (\x -> B) f x y p
+
+       ... does (cong A Type (\x -> B) x y p) compute to (refl B)?
+       ..... i.e. (picong A (\x -> Type) (\x -> B) x y p) */
+
     /* (A: Type -> x: A -> y: A -> z: A -> x = y -> y = z -> x = z) */
     EXPR_TRANS,
     /* (A: Type -> x: A -> y: A -> x = y -> y = x) */
@@ -137,11 +147,29 @@ enum expr_head_type {
     /* (A1: Type -> B1: Type -> A2: Type -> B2: Type
            -> A1 = A2 -> B1 = B2 -> (A1 = B1) = (A2 = B2)) */
     EXPR_BOX,
+    /* (A1: Type -> A2: Type -> B1: (A1 -> Type) -> B2: (A2 -> Type)
+           -> p: A1 = A2 -> q: (x1: A1 -> x2: A2 -> Equal p x1 x2 -> B1 x1 = B2 x2)
+           -> (x: A1 -> B1 x) = (x: A2 -> B2 x)) */
+    EXPR_ARROW,
 
     /* Extensionality */
-    /* (A: Type -> B: (A -> Type) -> f: (x: A -> B x) -> g: (x: A -> B x)
-           -> (x: A -> f x = g x) -> f = g) */
-    EXPR_EXT,
+    /* Heterogeneous Extensionality */
+    /* (A1: Type -> A2: Type -> B1: (A1 -> Type) -> B2: (A2 -> Type)
+           -> p: A1 = A2 -> q: (x1: A1 -> x2: A2 -> Equal p x1 x2 -> B1 x1 = B2 x2)
+           -> f: (x: A1 -> B1 x) -> g: (x: A2 -> B2 x)
+           -> (x1: A1 -> x2: A2 -> (px: Equal p x1 x2) -> Equal (q x1 x2 px) (f x1) (g x2))
+           -> Equal (arrow p q) f g) */
+    EXPR_HETEXT,
+    /* Then we can implement:
+       mk_pathmap: (A: Type -> B: (A -> Type)
+           -> f: (x: A -> B x) -> g: (x: A -> B x) -> p: (x: A -> f x = g x)
+           -> x1: A1 -> x2: A2 -> px: x1 = x2
+           -> Equal (cong A Type B x1 x2 px) (f x1) (g x2))
+       mk_pathmap A B f g p x1 x2 px = trans (p x1) (picong A B g x1 x2 px)
+
+       ext: (A: Type -> B: (A -> Type) -> f: (x: A -> B x) -> g: (x: A -> B x)
+           -> (x: A -> f x = g x) -> f = g)
+       ext A B f g p = het_ext B B (refl A) (cong A Type B) f g (mk_pathmap A B f g p) */
 
     /* HIT stuff */
     /* (A: Type -> R: (A -> A -> Type) -> Type) */
@@ -391,7 +419,7 @@ void pretty_print_expr_rec(
 
     switch (it->head_type) {
         case EXPR_NULL:
-            printf("?");
+            printf("(null)");
             break;
         case EXPR_APPLY_LAMBDA:
             /* Do nothing. */
@@ -409,6 +437,17 @@ void pretty_print_expr_rec(
             break;
         case EXPR_SORT:
             printf("Type");
+            break;
+
+        case EXPR_EQUALS:
+            printf("Equal");
+            break;
+        case EXPR_REFL:
+            printf("refl");
+            break;
+
+        default:
+            printf("?");
             break;
     }
 
@@ -779,6 +818,38 @@ struct expr subst_exprs(
     }
 
     return result;
+}
+
+const struct expr universe = {.head_type = EXPR_SORT};
+
+void add_pi(struct expr *it, char *name, struct expr type) {
+    it->pi_intro_count += 1;
+    struct parameter_spec *spec = parameter_spec_buffer_addn(
+        &it->lambda_intro_types,
+        1
+    );
+    spec->name = c_str(name);
+    spec->type = type;
+}
+
+void add_exp(struct expr *it, struct expr type) {
+    it->pi_intro_count += 1;
+    struct parameter_spec *spec = parameter_spec_buffer_addn(
+        &it->lambda_intro_types,
+        1
+    );
+    spec->name = (struct str){0};
+    spec->type = type;
+}
+
+void apply_body(struct expr *it, struct expr arg) {
+    it->arg_count += 1;
+    struct expr *out = expr_buffer_addn(&it->arg_buffer, 1);
+    *out = arg;
+}
+
+struct expr var(size_t index) {
+    return (struct expr){.head_type = EXPR_VAR, .head_var_index = index};
 }
 
 #endif

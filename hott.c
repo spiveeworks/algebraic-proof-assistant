@@ -21,26 +21,6 @@ static void add_input(struct expr *it, char *name, struct expr type) {
     spec->type = type;
 }
 
-static void add_pi(struct expr *it, char *name, struct expr type) {
-    it->pi_intro_count += 1;
-    struct parameter_spec *spec = parameter_spec_buffer_addn(
-        &it->lambda_intro_types,
-        1
-    );
-    spec->name = c_str(name);
-    spec->type = type;
-}
-
-static void add_exp(struct expr *it, struct expr type) {
-    it->pi_intro_count += 1;
-    struct parameter_spec *spec = parameter_spec_buffer_addn(
-        &it->lambda_intro_types,
-        1
-    );
-    spec->name = (struct str){0};
-    spec->type = type;
-}
-
 static void set_head(struct expr *it, struct expr reference) {
     it->head_type = reference.head_type;
     it->head_var_index = reference.head_var_index;
@@ -51,12 +31,6 @@ static void set_body(struct expr *it, struct expr reference) {
     it->head_var_index = reference.head_var_index;
     it->arg_count = reference.arg_count;
     it->arg_buffer = reference.arg_buffer;
-}
-
-static void apply_body(struct expr *it, struct expr arg) {
-    it->arg_count += 1;
-    struct expr *out = expr_buffer_addn(&it->arg_buffer, 1);
-    *out = arg;
 }
 
 static struct expr apply(struct expr f, struct expr x) {
@@ -71,11 +45,7 @@ static struct expr apply(struct expr f, struct expr x) {
     return result;
 }
 
-static const struct expr universe = {.head_type = EXPR_SORT};
-
-static struct expr var(size_t index) {
-    return (struct expr){.head_type = EXPR_VAR, .head_var_index = index};
-}
+static const struct expr equality_type = {.head_type = EXPR_EQUALS};
 
 /* Build a test expression, pretty print it, type check it, print the type,
    then try destroying both. */
@@ -248,10 +218,29 @@ void eval_test(void) {
     printf("\n");
 }
 
+void eq_test(void) {
+    struct expr it = {0};
+    set_head(&it, equality_type);
+
+    printf("Expr := ");
+    pretty_print_expr(&it);
+    printf("\n");
+    struct expr it_type = check_type(&it);
+    printf("Typeof(Expr) := ");
+    pretty_print_expr(&it_type);
+    printf("\n");
+
+    struct expr type_type = check_type(&it_type);
+    printf("Typeof(Typeof(Expr)) := ");
+    pretty_print_expr(&type_type);
+    printf("\n");
+}
+
 int main(int argc, char **argv) {
     /* pi_test(true); */
     /* beta_test(); */
-    eval_test();
+    /* eval_test(); */
+    eq_test();
 
     printf("Done.\n");
     return 0;
