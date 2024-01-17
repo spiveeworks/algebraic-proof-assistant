@@ -116,6 +116,51 @@ enum expr_head_type {
     EXPR_VAR,
     EXPR_GLOBAL,
     EXPR_SORT,
+
+    /* Equality stuff */
+    /* (A: Type -> A -> A -> Type) */
+    EXPR_EQUALS,
+    /* (A: Type -> x: A -> x = x) */
+    EXPR_REFL,
+    /* (A: Type -> B: Type -> A = B -> A -> B) */
+    EXPR_TRANSPORT,
+
+    /* Path stuff */
+    /* (A: Type -> B: Type -> f: (A -> B)
+           -> x: A -> y: A -> x = y -> f x = f y) */
+    EXPR_CONG,
+    /* (A: Type -> x: A -> y: A -> z: A -> x = y -> y = z -> x = z) */
+    EXPR_TRANS,
+    /* (A: Type -> x: A -> y: A -> x = y -> y = x) */
+    EXPR_SYM,
+
+    /* (A1: Type -> B1: Type -> A2: Type -> B2: Type
+           -> A1 = A2 -> B1 = B2 -> (A1 = B1) = (A2 = B2)) */
+    EXPR_BOX,
+
+    /* Extensionality */
+    /* (A: Type -> B: (A -> Type) -> f: (x: A -> B x) -> g: (x: A -> B x)
+           -> (x: A -> f x = g x) -> f = g) */
+    EXPR_EXT,
+
+    /* HIT stuff */
+    /* (A: Type -> R: (A -> A -> Type) -> Type) */
+    EXPR_QUOTIENT,
+    /* (A: Type -> R: (A -> A -> Type) -> A -> Quotient A R) */
+    EXPR_QUOTIENT_PROJECT,
+    /* (A: Type -> R: (A -> A -> Type)
+           -> x: A -> y: A -> R x y -> project A R x = project A R y) */
+    EXPR_QUOTIENT_EDGE,
+    /* (A: Type -> R: (A -> A -> Type) -> B: Type -> f: (A -> B)
+           -> (x: A -> y: A -> R x y -> f x = f y) -> Quotient A R -> B) */
+    EXPR_QUOTIENT_ELIM,
+    /* Could make an actual dependently typed one, idk. */
+
+    /* Univalence stuff? */
+    /* (A: Type -> B: Type -> f: (A -> B) -> g: (B -> A)
+           -> gof: (x: A -> g (f x) = x) -> fog: (y: B -> f (g y) = y)
+           -> commute: (x: A -> cong f (gof x) = fog (f x)) -> A = B) */
+    EXPR_UV,
 };
 
 union expr_head_data {
