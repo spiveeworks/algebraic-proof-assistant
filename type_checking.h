@@ -354,6 +354,16 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
             apply_body(&curr_type, var(ctx_depth + 1));
             break;
         }
+        case EXPR_APPLY_PATH:
+        {
+            curr_type = apply_path_type(ctx_depth);
+            break;
+        }
+        case EXPR_HETEXT:
+        {
+            curr_type = het_ext_type(ctx_depth);
+            break;
+        }
     }
 
     size_t skip = 0;

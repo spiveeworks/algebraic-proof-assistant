@@ -1,8 +1,7 @@
 #ifndef APA_EVAL_H
 #define APA_EVAL_H
 
-bool reduce_expr_once(size_t depth, struct expr *it) {
-    if (it->head_type != EXPR_APPLY_LAMBDA) return false;
+void reduce_apply_lambda(size_t depth, struct expr *it) {
     if (it->arg_count == 0) {
         fprintf(stderr, "Error: Got EXPR_APPLY_LAMBDA with no args?\n");
         exit(EXIT_FAILURE);
@@ -61,8 +60,22 @@ bool reduce_expr_once(size_t depth, struct expr *it) {
     /* Now that the input is uninitialised, overwrite it with the result we
        just calculated. */
     *it = result;
+}
 
-    return true;
+bool reduce_apply_path(size_t depth, struct expr *it) {
+    return false;
+}
+
+bool reduce_expr_once(size_t depth, struct expr *it) {
+    bool reduced = false;
+    if (it->head_type == EXPR_APPLY_LAMBDA) {
+        reduce_apply_lambda(depth, it);
+        reduced = true;
+    } else if (it->head_type == EXPR_APPLY_PATH) {
+        reduced = reduce_apply_path(depth, it);
+    }
+
+    return reduced;
 }
 
 void head_normalise(struct expr *it) {

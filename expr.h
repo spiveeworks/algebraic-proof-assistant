@@ -131,10 +131,6 @@ enum expr_head_type {
     EXPR_TRANSPORT_EQ,
 
     /* Path stuff */
-    /* (A: Type -> B: (A -> Type) -> f: (x: A -> B x)
-           -> x: A -> y: A -> p: x = y -> f x = f y)
-        Note f x = f y means Equal (B x) (B y) (f x) (f y) */
-    EXPR_PICONG,
     /* (A, B, C: Type -> x: A -> y: B -> z: C -> x = y -> y = z -> x = z) */
     EXPR_TRANS,
     /* (A, B: Type -> x: A -> y: B -> x = y -> y = x) */
@@ -149,6 +145,19 @@ enum expr_head_type {
     EXPR_ARROW,
 
     /* Extensionality */
+    /* Inverse of extensionality, takes a path between f and g, and 'applies'
+       it to a path between x1 and x2.
+       (A1: Type -> A2: Type -> B1: (A1 -> Type) -> B2: (A2 -> Type)
+           -> f: (x: A1 -> B1 x) -> g: (x: A2 -> B2 x)
+           -> f = g
+           -> x1: A1 -> x2: A2
+           -> x1 = x2 -> f x1 = g x2) */
+    EXPR_APPLY_PATH,
+    /* lets us define
+       cong: (A: Type -> B: (A -> Type) -> f: (x: A -> B x)
+           -> x: A -> y: A -> p: x = y -> f x = f y)
+       cong A B f x y p = apply_path (refl f) p */
+
     /* Heterogeneous Extensionality */
     /* (A1: Type -> A2: Type -> B1: (A1 -> Type) -> B2: (A2 -> Type)
            -> p: A1 = A2
@@ -439,6 +448,12 @@ void pretty_print_expr_rec(
             break;
         case EXPR_REFL:
             printf("refl");
+            break;
+        case EXPR_APPLY_PATH:
+            printf("apply_path");
+            break;
+        case EXPR_HETEXT:
+            printf("het_ext");
             break;
 
         default:
@@ -845,6 +860,151 @@ void apply_body(struct expr *it, struct expr arg) {
 
 struct expr var(size_t index) {
     return (struct expr){.head_type = EXPR_VAR, .head_var_index = index};
+}
+
+struct expr pi(char *name, struct expr type, struct expr body) {
+    add_pi(&body, name, type);
+    return body;
+}
+
+struct expr exp(struct expr type, struct expr body) {
+    add_exp(&body, type);
+    return body;
+}
+
+static struct expr apply(struct expr f, struct expr x) {
+    if (f.lambda_intro_count == 0 && f.pi_intro_count == 0) {
+        apply_body(&f, x);
+        return f;
+    }
+    /* else */
+    struct expr result = {.head_type = EXPR_APPLY_LAMBDA};
+    apply_body(&result, f);
+    apply_body(&result, x);
+    return result;
+}
+
+struct expr apply_path_type(size_t ctx_depth) {
+    /* apply_path: (A1: Type -> A2: Type
+                     -> B1: (A1 -> Type) -> B2: (A2 -> Type)
+                     -> f: (x: A1 -> B1 x) -> g: (x: A2 -> B2 x)
+                     -> f = g
+                     -> x1: A1 -> x2: A2
+                     -> x1 = x2 -> f x1 = g x2) */
+    struct expr curr_type = {0};
+
+    add_pi(&curr_type, "A1", universe);
+    add_pi(&curr_type, "A2", universe);
+    add_pi(&curr_type, "B1", exp(var(ctx_depth), universe));
+    add_pi(&curr_type, "B2", exp(var(ctx_depth + 1), universe));
+
+    {
+        struct expr b1x = apply(var(ctx_depth + 2), var(ctx_depth + 4));
+        add_pi(&curr_type, "f1", pi("x", var(ctx_depth), b1x));
+
+        struct expr b2x = apply(var(ctx_depth + 3), var(ctx_depth + 5));
+        add_pi(&curr_type, "f2", pi("x", var(ctx_depth + 1), b2x));
+    }
+    {
+        struct expr feq = {0};
+        feq.head_type = EXPR_EQUALS;
+        struct expr b1x = apply(var(ctx_depth + 2), var(ctx_depth + 6));
+        apply_body(&feq, pi("x", var(ctx_depth), b1x));
+
+        struct expr b2x = apply(var(ctx_depth + 3), var(ctx_depth + 6));
+        apply_body(&feq, pi("x", var(ctx_depth + 1), b2x));
+        apply_body(&feq, var(ctx_depth + 4));
+        apply_body(&feq, var(ctx_depth + 5));
+        add_exp(&curr_type, feq);
+    }
+    add_pi(&curr_type, "x1", var(ctx_depth));
+    add_pi(&curr_type, "x2", var(ctx_depth + 1));
+    {
+        struct expr xeq = {0};
+        xeq.head_type = EXPR_EQUALS;
+        apply_body(&xeq, var(ctx_depth));
+        apply_body(&xeq, var(ctx_depth + 1));
+        apply_body(&xeq, var(ctx_depth + 7));
+        apply_body(&xeq, var(ctx_depth + 8));
+        add_exp(&curr_type, xeq);
+    }
+
+    curr_type.head_type = EXPR_EQUALS;
+
+    apply_body(&curr_type, apply(var(ctx_depth + 2), var(ctx_depth + 7)));
+    apply_body(&curr_type, apply(var(ctx_depth + 3), var(ctx_depth + 8)));
+    apply_body(&curr_type, apply(var(ctx_depth + 4), var(ctx_depth + 7)));
+    apply_body(&curr_type, apply(var(ctx_depth + 5), var(ctx_depth + 8)));
+
+    return curr_type;
+}
+
+struct expr het_ext_type(size_t ctx_depth) {
+    /* (A1: Type -> A2: Type -> B1: (A1 -> Type) -> B2: (A2 -> Type)
+           -> p: A1 = A2
+           -> f: (x: A1 -> B1 x) -> g: (x: A2 -> B2 x)
+           -> (x1: A1 -> x2: A2 -> x1 = x2 -> f x1 = g x2)
+           -> f = g) */
+    struct expr curr_type = {0};
+
+    add_pi(&curr_type, "A1", universe);
+    add_pi(&curr_type, "A2", universe);
+    add_pi(&curr_type, "B1", exp(var(ctx_depth), universe));
+    add_pi(&curr_type, "B2", exp(var(ctx_depth + 1), universe));
+
+    {
+        struct expr aeq = {0};
+        aeq.head_type = EXPR_EQUALS;
+        apply_body(&aeq, universe);
+        apply_body(&aeq, universe);
+
+        apply_body(&aeq, var(ctx_depth));
+        apply_body(&aeq, var(ctx_depth + 1));
+        add_exp(&curr_type, aeq);
+    }
+
+    {
+        struct expr b1x = apply(var(ctx_depth + 2), var(ctx_depth + 5));
+        add_pi(&curr_type, "f1", pi("x", var(ctx_depth), b1x));
+
+        struct expr b2x = apply(var(ctx_depth + 3), var(ctx_depth + 6));
+        add_pi(&curr_type, "f2", pi("x", var(ctx_depth + 1), b2x));
+    }
+    /* (x1: A1 -> x2: A2 -> x1 = x2 -> f x1 = g x2) */
+    {
+        struct expr pathmap = {0};
+
+        add_pi(&pathmap, "x1", var(ctx_depth));
+        add_pi(&pathmap, "x2", var(ctx_depth + 1));
+
+        struct expr xeq = {0};
+        xeq.head_type = EXPR_EQUALS;
+        apply_body(&xeq, var(ctx_depth));
+        apply_body(&xeq, var(ctx_depth + 1));
+        apply_body(&xeq, var(ctx_depth + 7));
+        apply_body(&xeq, var(ctx_depth + 8));
+        add_exp(&pathmap, xeq);
+
+        pathmap.head_type = EXPR_EQUALS;
+
+        apply_body(&pathmap, apply(var(ctx_depth + 2), var(ctx_depth + 7)));
+        apply_body(&pathmap, apply(var(ctx_depth + 3), var(ctx_depth + 8)));
+        apply_body(&pathmap, apply(var(ctx_depth + 5), var(ctx_depth + 7)));
+        apply_body(&pathmap, apply(var(ctx_depth + 6), var(ctx_depth + 8)));
+
+        add_exp(&curr_type, pathmap);
+    }
+
+    curr_type.head_type = EXPR_EQUALS;
+    struct expr b1x = apply(var(ctx_depth + 2), var(ctx_depth + 8));
+    apply_body(&curr_type, pi("x", var(ctx_depth), b1x));
+
+    struct expr b2x = apply(var(ctx_depth + 3), var(ctx_depth + 8));
+    apply_body(&curr_type, pi("x", var(ctx_depth + 1), b2x));
+    apply_body(&curr_type, var(ctx_depth + 5));
+    apply_body(&curr_type, var(ctx_depth + 6));
+
+    return curr_type;
 }
 
 #endif

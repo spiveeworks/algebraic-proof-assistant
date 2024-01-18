@@ -33,18 +33,6 @@ static void set_body(struct expr *it, struct expr reference) {
     it->arg_buffer = reference.arg_buffer;
 }
 
-static struct expr apply(struct expr f, struct expr x) {
-    if (f.lambda_intro_count == 0 && f.pi_intro_count == 0) {
-        apply_body(&f, x);
-        return f;
-    }
-    /* else */
-    struct expr result = {.head_type = EXPR_APPLY_LAMBDA};
-    apply_body(&result, f);
-    apply_body(&result, x);
-    return result;
-}
-
 static const struct expr equality_type = {.head_type = EXPR_EQUALS};
 
 /* Build a test expression, pretty print it, type check it, print the type,
@@ -254,13 +242,172 @@ void eq_test(void) {
         pretty_print_expr(&type_type);
         printf("\n");
     }
+
+    {
+        struct expr it = {0};
+        it.head_type = EXPR_APPLY_PATH;
+
+        printf("Expr := ");
+        pretty_print_expr(&it);
+        printf("\n");
+        struct expr it_type = check_type(&it);
+        printf("Typeof(Expr) := ");
+        pretty_print_expr(&it_type);
+        printf("\n");
+
+        struct expr type_type = check_type(&it_type);
+        printf("Typeof(Typeof(Expr)) := ");
+        pretty_print_expr(&type_type);
+        printf("\n");
+    }
+
+    {
+        struct expr it = {0};
+        it.head_type = EXPR_HETEXT;
+
+        printf("Expr := ");
+        pretty_print_expr(&it);
+        printf("\n");
+        struct expr it_type = check_type(&it);
+        printf("Typeof(Expr) := ");
+        pretty_print_expr(&it_type);
+        printf("\n");
+
+        struct expr type_type = check_type(&it_type);
+        printf("Typeof(Typeof(Expr)) := ");
+        pretty_print_expr(&type_type);
+        printf("\n");
+    }
+}
+
+void ext_test(void) {
+    /* Suppose we have a unit type, so
+           A: Type,
+           x: A,
+           centre: (y: A -> x = y),
+       and we have two functions (A -> A):
+           f1 y = x
+       and
+           f2 y = y
+       id, and const x. These are extensionally equal:
+           pathmap: (y1, y2: A -> y1 = y2 -> f1 y1 = f2 y2)
+               i.e. (y1, y2: A -> y1 = y2 -> x = y2)
+           pathmap y1 y2 yeq = centre y2
+       then we get
+           feq: f1 = f2
+           feq = hetext A A (\_ -> A) (\_ -> A) (refl Type A) f1 f2 pathmap
+       and then if we have some specific y in A, and a proof that y = x, we
+       should be able to do something like apply_path to that path, and get
+       centre x as the result.
+          test_thing: (y: A -> y = x -> x = x)
+          test_thing y p = apply_path A A (\_ -> A) (\_ -> A) f1 f2 feq y x p
+       */
+    struct expr it = {0};
+    add_input(&it, "A", universe);
+    add_input(&it, "x", var(0));
+    {
+        struct expr centre = {0};
+        add_pi(&centre, "y", var(0));
+        centre.head_type = EXPR_EQUALS;
+        apply_body(&centre, var(0));
+        apply_body(&centre, var(0));
+        apply_body(&centre, var(1));
+        apply_body(&centre, var(2));
+        add_input(&it, "centre", centre);
+    }
+    add_input(&it, "y", var(0));
+    {
+        struct expr eq = {0};
+        eq.head_type = EXPR_EQUALS;
+        apply_body(&eq, var(0));
+        apply_body(&eq, var(0));
+        apply_body(&eq, var(3));
+        apply_body(&eq, var(1));
+        add_input(&it, "p", eq);
+    }
+    it.head_type = EXPR_APPLY_PATH;
+    apply_body(&it, var(0));
+    apply_body(&it, var(0));
+
+    struct expr family = {0};
+    add_input(&family, "_", var(0));
+    set_head(&family, var(0));
+    apply_body(&it, family);
+    copy_expr(NULL, &family);
+    apply_body(&it, family);
+
+    struct expr f1 = {0};
+    add_input(&f1, "y", var(0));
+    set_head(&f1, var(1));
+    apply_body(&it, f1);
+
+    struct expr f2 = {0};
+    add_input(&f2, "y", var(0));
+    set_head(&f2, var(5));
+    apply_body(&it, f2);
+
+    struct expr feq = {0};
+    feq.head_type = EXPR_HETEXT;
+    apply_body(&feq, var(0));
+    apply_body(&feq, var(0));
+    copy_expr(NULL, &family);
+    apply_body(&feq, family);
+    copy_expr(NULL, &family);
+    apply_body(&feq, family);
+    {
+        struct expr aeq = {0};
+        aeq.head_type = EXPR_REFL;
+        apply_body(&aeq, universe);
+        apply_body(&aeq, var(0));
+        apply_body(&feq, aeq);
+    }
+    copy_expr(NULL, &f1);
+    apply_body(&feq, f1);
+    copy_expr(NULL, &f2);
+    apply_body(&feq, f2);
+
+    struct expr pathmap = {0};
+    add_input(&pathmap, "y1", var(0));
+    add_input(&pathmap, "y2", var(0));
+    {
+        struct expr yeq = {0};
+        yeq.head_type = EXPR_EQUALS;
+        apply_body(&yeq, var(0));
+        apply_body(&yeq, var(0));
+        apply_body(&yeq, var(5));
+        apply_body(&yeq, var(6));
+        add_input(&pathmap, "yeq", yeq);
+    }
+    set_body(&pathmap, apply(var(2), var(6))); /* centre */
+
+    apply_body(&feq, pathmap);
+
+    apply_body(&it, feq);
+
+    apply_body(&it, var(3));
+    apply_body(&it, var(1));
+    apply_body(&it, var(4));
+
+    printf("Expr := ");
+    pretty_print_expr(&it);
+    printf("\n");
+    struct expr it_type = check_type(&it);
+    printf("Type := ");
+    pretty_print_expr(&it_type);
+    printf("\n");
+
+    head_normalise(&it);
+    printf("Reduced := ");
+    pretty_print_expr(&it);
+    printf("\n");
 }
 
 int main(int argc, char **argv) {
     /* pi_test(true); */
     /* beta_test(); */
     /* eval_test(); */
-    eq_test();
+    /* eq_test(); */
+    ext_test();
 
     printf("Done.\n");
     return 0;
