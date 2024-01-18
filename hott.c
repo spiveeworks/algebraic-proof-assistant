@@ -219,21 +219,41 @@ void eval_test(void) {
 }
 
 void eq_test(void) {
-    struct expr it = {0};
-    set_head(&it, equality_type);
+    {
+        struct expr it = {0};
+        set_head(&it, equality_type);
 
-    printf("Expr := ");
-    pretty_print_expr(&it);
-    printf("\n");
-    struct expr it_type = check_type(&it);
-    printf("Typeof(Expr) := ");
-    pretty_print_expr(&it_type);
-    printf("\n");
+        printf("Expr := ");
+        pretty_print_expr(&it);
+        printf("\n");
+        struct expr it_type = check_type(&it);
+        printf("Typeof(Expr) := ");
+        pretty_print_expr(&it_type);
+        printf("\n");
 
-    struct expr type_type = check_type(&it_type);
-    printf("Typeof(Typeof(Expr)) := ");
-    pretty_print_expr(&type_type);
-    printf("\n");
+        struct expr type_type = check_type(&it_type);
+        printf("Typeof(Typeof(Expr)) := ");
+        pretty_print_expr(&type_type);
+        printf("\n");
+    }
+
+    {
+        struct expr it = {0};
+        it.head_type = EXPR_REFL;
+
+        printf("Expr := ");
+        pretty_print_expr(&it);
+        printf("\n");
+        struct expr it_type = check_type(&it);
+        printf("Typeof(Expr) := ");
+        pretty_print_expr(&it_type);
+        printf("\n");
+
+        struct expr type_type = check_type(&it_type);
+        printf("Typeof(Typeof(Expr)) := ");
+        pretty_print_expr(&type_type);
+        printf("\n");
+    }
 }
 
 int main(int argc, char **argv) {

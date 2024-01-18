@@ -334,32 +334,9 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
 
         case EXPR_EQUALS:
         {
-            /* Equals : (A: Type -> B: Type -> A = B -> A -> B -> Type) */
+            /* Equals : (A: Type -> B: Type -> A -> B -> Type) */
             add_pi(&curr_type, "A", universe);
             add_pi(&curr_type, "B", universe);
-
-            {
-                /* we want type_path := A = B,
-                     i.e. Equals Type Type (refl Type Type) A B
-                   So first define type_refl := refl Type Type */
-                struct expr type_refl = {0};
-                type_refl.head_type = EXPR_REFL;
-                apply_body(&type_refl, universe);
-                apply_body(&type_refl, universe);
-
-                /* now define Equals Type Type type_refl A B */
-                struct expr type_path = {0};
-                type_path.head_type = EXPR_EQUALS;
-                apply_body(&type_path, universe);
-                apply_body(&type_path, universe);
-                apply_body(&type_path, type_refl);
-                apply_body(&type_path, var(ctx_depth));
-                apply_body(&type_path, var(ctx_depth + 1));
-
-                /* Now add type_path to the inputs of Equals, lol */
-                add_exp(&curr_type, type_path);
-            }
-            /* Now add the actual endpoints of the path. */
             add_exp(&curr_type, var(ctx_depth));
             add_exp(&curr_type, var(ctx_depth + 1));
             curr_type.head_type = EXPR_SORT;
@@ -369,19 +346,10 @@ struct expr check_type_rec(struct expr *it, struct check_type_state *state) {
         {
             add_pi(&curr_type, "A", universe);
             add_pi(&curr_type, "x", var(ctx_depth));
-            /* Output is a proof of Equal A A (refl Type A) x x */
+            /* Output is a proof of Equal A A x x */
             curr_type.head_type = EXPR_EQUALS;
             apply_body(&curr_type, var(ctx_depth));
             apply_body(&curr_type, var(ctx_depth));
-            {
-                /* Build (refl Type A) */
-                struct expr a_refl = {0};
-                a_refl.head_type = EXPR_REFL;
-                apply_body(&a_refl, universe);
-                apply_body(&a_refl, var(ctx_depth));
-
-                apply_body(&curr_type, a_refl);
-            }
             apply_body(&curr_type, var(ctx_depth + 1));
             apply_body(&curr_type, var(ctx_depth + 1));
             break;

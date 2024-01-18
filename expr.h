@@ -118,58 +118,53 @@ enum expr_head_type {
     EXPR_SORT,
 
     /* Equality stuff */
-    /* (A: Type -> B: Type -> A = B -> A -> B -> Type) */
+    /* (A: Type -> B: Type -> A -> B -> Type) */
     EXPR_EQUALS,
     /* (A: Type -> x: A -> x = x) */
-    /* Where x = y means Equals A A (refl Type A) x y. */
+    /* Where x = y means Equal A B x y. */
     EXPR_REFL,
+    /* (A: Type -> B: Type -> x: A -> y: B -> x = y -> A = B) */
+    EXPR_ENDPOINT_TYPES_EQ,
     /* (A: Type -> B: Type -> A = B -> A -> B) */
     EXPR_TRANSPORT,
+    /* (A: Type -> B: Type -> p: A = B -> x: A -> x = transport p x) */
+    EXPR_TRANSPORT_EQ,
 
     /* Path stuff */
     /* (A: Type -> B: (A -> Type) -> f: (x: A -> B x)
-           -> x: A -> y: A -> p: x = y
-           -> Equal (cong A Type B x y p) (f x) (f y)) */
+           -> x: A -> y: A -> p: x = y -> f x = f y)
+        Note f x = f y means Equal (B x) (B y) (f x) (f y) */
     EXPR_PICONG,
-    /* Where
-       cong: (A: Type -> B: Type -> f: (A -> B)
-           -> x: A -> y: A -> x = y -> f x = f y)
-       cong A B f x y p = picong A (\x -> B) f x y p
-
-       ... does (cong A Type (\x -> B) x y p) compute to (refl B)?
-       ..... i.e. (picong A (\x -> Type) (\x -> B) x y p) */
-
-    /* (A: Type -> x: A -> y: A -> z: A -> x = y -> y = z -> x = z) */
+    /* (A, B, C: Type -> x: A -> y: B -> z: C -> x = y -> y = z -> x = z) */
     EXPR_TRANS,
-    /* (A: Type -> x: A -> y: A -> x = y -> y = x) */
+    /* (A, B: Type -> x: A -> y: B -> x = y -> y = x) */
     EXPR_SYM,
 
     /* (A1: Type -> B1: Type -> A2: Type -> B2: Type
            -> A1 = A2 -> B1 = B2 -> (A1 = B1) = (A2 = B2)) */
     EXPR_BOX,
     /* (A1: Type -> A2: Type -> B1: (A1 -> Type) -> B2: (A2 -> Type)
-           -> p: A1 = A2 -> q: (x1: A1 -> x2: A2 -> Equal p x1 x2 -> B1 x1 = B2 x2)
+           -> p: A1 = A2 -> q: (x1: A1 -> x2: A2 -> transport p x1 = x2 -> B1 x1 = B2 x2)
            -> (x: A1 -> B1 x) = (x: A2 -> B2 x)) */
     EXPR_ARROW,
 
     /* Extensionality */
     /* Heterogeneous Extensionality */
     /* (A1: Type -> A2: Type -> B1: (A1 -> Type) -> B2: (A2 -> Type)
-           -> p: A1 = A2 -> q: (x1: A1 -> x2: A2 -> Equal p x1 x2 -> B1 x1 = B2 x2)
+           -> p: A1 = A2
            -> f: (x: A1 -> B1 x) -> g: (x: A2 -> B2 x)
-           -> (x1: A1 -> x2: A2 -> (px: Equal p x1 x2) -> Equal (q x1 x2 px) (f x1) (g x2))
-           -> Equal (arrow p q) f g) */
+           -> (x1: A1 -> x2: A2 -> x1 = x2 -> f x1 = g x2)
+           -> f = g) */
     EXPR_HETEXT,
     /* Then we can implement:
        mk_pathmap: (A: Type -> B: (A -> Type)
            -> f: (x: A -> B x) -> g: (x: A -> B x) -> p: (x: A -> f x = g x)
-           -> x1: A1 -> x2: A2 -> px: x1 = x2
-           -> Equal (cong A Type B x1 x2 px) (f x1) (g x2))
+           -> (x1: A1 -> x2: A2 -> x1 = x2 -> f x1 = g x2))
        mk_pathmap A B f g p x1 x2 px = trans (p x1) (picong A B g x1 x2 px)
 
        ext: (A: Type -> B: (A -> Type) -> f: (x: A -> B x) -> g: (x: A -> B x)
            -> (x: A -> f x = g x) -> f = g)
-       ext A B f g p = het_ext B B (refl A) (cong A Type B) f g (mk_pathmap A B f g p) */
+       ext A B f g p = het_ext (refl A) f g (mk_pathmap A B f g p) */
 
     /* HIT stuff */
     /* (A: Type -> R: (A -> A -> Type) -> Type) */
