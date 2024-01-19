@@ -63,6 +63,30 @@ void reduce_apply_lambda(size_t depth, struct expr *it) {
 }
 
 bool reduce_apply_path(size_t depth, struct expr *it) {
+    /* A1 A2 B1 B2 f1 f2 feq x1 x2 xeq */
+    if (it->arg_count < 7) return false;
+    struct expr *apply_path_args = (struct expr*)&it->arg_buffer[1];
+    struct expr *feq = &apply_path_args[6];
+    if (feq->head_type == EXPR_HETEXT) {
+        /* A1 A2 B1 B2 aeq f1 f2 pathmap */
+        if (feq->arg_count < 8) return false;
+        struct expr *het_ext_args = (struct expr*)&feq->arg_buffer[1];
+        struct expr pathmap = {0};
+        copy_expr(&pathmap, &het_ext_args[7]);
+
+        /* Replace apply_path and the first 7 args, with the pathmap
+           itself. */
+        replace_head(it, 7, pathmap);
+
+        return true;
+    }
+
+    if (feq->head_type != EXPR_REFL) return false;
+
+    /* Now the complicated case, we have to actually convert a function on
+       points into a function on paths. */
+    /* TODO :P */
+
     return false;
 }
 

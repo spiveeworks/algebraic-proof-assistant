@@ -690,7 +690,7 @@ struct expr *concat_intros_set_head_alloc_args(
            Lambda Pi APPLY (Lambda Pi f w x) y z */
         it->head_type = EXPR_APPLY_LAMBDA;
 
-        it->arg_count = 1;
+        it->arg_count = additional_arg_count + 1;
         /* Allocate enough for to_add, and additional_arg_count */
         struct expr *result_args = expr_buffer_addn(
             &it->arg_buffer,
@@ -828,6 +828,63 @@ struct expr subst_exprs(
     }
 
     return result;
+}
+
+/* Simple function that can be used to evaluate builtins. Lambda and pi intros
+   are preserved, but the head and first n arguments are removed, and replaced
+   with a new expression. The remaining arguments are kept. */
+void replace_head(
+    struct expr *target,
+    size_t consume_arg_count,
+    struct expr new_head
+) {
+    struct expr result = *target;
+    result.arg_count = 0;
+    result.arg_buffer = NULL;
+    target->lambda_intro_count = 0;
+    target->pi_intro_count = 0;
+    target->lambda_intro_count = 0;
+    target->lambda_intro_types = NULL;
+
+    size_t remaining_arg_count = target->arg_count - consume_arg_count;
+    if (remaining_arg_count < 0) remaining_arg_count = 0;
+    struct expr *remaining_args_out = concat_intros_set_head_alloc_args(
+        &result,
+        new_head,
+        remaining_arg_count
+    );
+
+    /* The only thing concat_intros_set_head_alloc_args doesn't do, is move in
+       the new args. This is because usually we are substituting variables into
+       those args as well, but for built ins we don't need to do any such
+       thing. So write the args now. */
+    struct shared_buffer_header *ptr = target->arg_buffer;
+    if (ptr) {
+        struct expr *old_args = (struct expr*)&ptr[1];
+        if (ptr->reference_count > 1) {
+            for (int i = 0; i < remaining_arg_count; i++) {
+                struct expr *out = &remaining_args_out[i];
+                struct expr *arg = &old_args[i + consume_arg_count];
+                copy_expr(out, arg);
+            }
+            ptr->reference_count -= 1;
+        } else {
+            for (int i = 0; i < consume_arg_count; i++) {
+                destroy_expr(&old_args[i]);
+            }
+            memcpy(
+                remaining_args_out,
+                old_args + consume_arg_count,
+                remaining_arg_count * sizeof(struct expr)
+            );
+            free(ptr);
+        }
+    }
+
+    /* target->arg_buffer has been decremented or destroyed,
+       target->lambda_intro_types has been moved into result, so target is now
+       deinitialized, which means we can overwrite it. */
+    *target = result;
 }
 
 const struct expr universe = {.head_type = EXPR_SORT};
