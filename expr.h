@@ -690,7 +690,7 @@ struct expr *concat_intros_set_head_alloc_args(
            Lambda Pi APPLY (Lambda Pi f w x) y z */
         it->head_type = EXPR_APPLY_LAMBDA;
 
-        it->arg_count = additional_arg_count + 1;
+        it->arg_count = 1;
         /* Allocate enough for to_add, and additional_arg_count */
         struct expr *result_args = expr_buffer_addn(
             &it->arg_buffer,
@@ -854,9 +854,9 @@ void replace_head(
         remaining_arg_count
     );
 
-    /* The only thing concat_intros_set_head_alloc_args doesn't do, is move in
-       the new args. This is because usually we are substituting variables into
-       those args as well, but for built ins we don't need to do any such
+    /* The only thing concat_intros_set_head_alloc_args doesn't do, is actually
+       add the new args. This is because usually we are substituting variables
+       into those args as well, but for built ins we don't need to do any such
        thing. So write the args now. */
     struct shared_buffer_header *ptr = target->arg_buffer;
     if (ptr) {
@@ -880,6 +880,7 @@ void replace_head(
             free(ptr);
         }
     }
+    result.arg_count += remaining_arg_count;
 
     /* target->arg_buffer has been decremented or destroyed,
        target->lambda_intro_types has been moved into result, so target is now
